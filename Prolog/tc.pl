@@ -21,6 +21,7 @@ tc_debug_off :-
 % Tipi:
 %   t_int                        intero
 %   t_atom                       atomo
+%   t_bool                       booleano         %%% BOOL
 %   t_var(Id)                    variabile di tipo
 %   t_list(T)                    lista di elementi di tipo T
 %   t_pred(Name,Arity,ArgsTypes) tipo di predicato
@@ -64,6 +65,7 @@ read_terms(Stream, [T|Ts]) :-
 % Tipi:
 %   t_int
 %   t_atom
+%   t_bool                    %%% BOOL
 %   t_var(Id)
 %   t_list(T)
 %   t_pred(Name,Arity,ArgsTypes)
@@ -206,6 +208,10 @@ infer_term_type(Term, VarEnv, Ty, C, C) :-
     var(Term), !,
     lookup_var_type(VarEnv, Term, Ty).
 
+%%% BOOL: costanti booleane true/false riconosciute come t_bool
+infer_term_type(true, _VarEnv, t_bool, C, C) :- !.
+infer_term_type(false, _VarEnv, t_bool, C, C) :- !.
+
 % lista vuota []
 infer_term_type(Term, _VarEnv, t_list(TElem), C, C) :-
     Term == [], !,
@@ -220,7 +226,7 @@ infer_term_type([H|T], VarEnv, t_list(TElem), CIn, COut) :- !,
     add_constraint(eq(TH, TElem), C2, C3),
     add_constraint(eq(TT, t_list(TElem)), C3, COut).
 
-% atomo
+% atomo (non booleano)
 infer_term_type(Term, _VarEnv, t_atom, C, C) :-
     atom(Term), !.
 
@@ -342,6 +348,7 @@ solve_constraints_list([eq(T1,T2)|Cs], SubIn, SubOut, ErrIn, ErrOut) :-
 % unify_type(+T1, +T2, +SubIn, -SubOut, -Errors)
 unify_type(t_int, t_int, Sub, Sub, []) :- !.
 unify_type(t_atom, t_atom, Sub, Sub, []) :- !.
+unify_type(t_bool, t_bool, Sub, Sub, []) :- !.   %%% BOOL
 
 % liste
 unify_type(t_list(T1), t_list(T2), SubIn, SubOut, Errs) :- !,
@@ -371,7 +378,8 @@ bind_var(Id, T, SubIn, SubOut) :-
 
 occurs_in(Id, t_var(Id), _Sub) :- !.
 occurs_in(_Id, t_int, _Sub) :- !, fail.
-occurs_in(_Id, t_atom, _Sub) :- !, fail.
+occurs_in(_Id, t_atom, _Sub) :- !, fail.      %%% BOOL (già gestito)
+occurs_in(_Id, t_bool, _Sub) :- !, fail.      %%% BOOL
 occurs_in(Id, t_list(T), Sub) :- !,
     occurs_in(Id, T, Sub).
 occurs_in(Id, t_pred(_,_,Args), Sub) :-
@@ -392,7 +400,8 @@ apply_subst_type(Subst, t_var(Id), TOut) :-
     ; TOut = t_var(Id)
     ), !.
 apply_subst_type(_Subst, t_int, t_int) :- !.
-apply_subst_type(_Subst, t_atom, t_atom) :- !.
+apply_subst_type(_Subst, t_atom, t_atom) :- !.   %%% BOOL
+apply_subst_type(_Subst, t_bool, t_bool) :- !.   %%% BOOL
 apply_subst_type(Subst, t_list(T), t_list(TOut)) :- !,
     apply_subst_type(Subst, T, TOut).
 apply_subst_type(Subst, t_pred(N,A,Args), t_pred(N,A,ArgsOut)) :- !,
@@ -426,6 +435,7 @@ format_pred_type(Name, _Arity,
 
 type_to_atom(t_int, 'integer').
 type_to_atom(t_atom, 'atom').
+type_to_atom(t_bool, 'bool').                 %%% BOOL
 type_to_atom(t_var(Id), Atom) :-
     format(atom(Atom), 'T~w', [Id]).
 type_to_atom(t_list(T), Atom) :-
