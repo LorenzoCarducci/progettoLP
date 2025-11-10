@@ -1,4 +1,6 @@
-%%%% <Matricola> <Cognome> <Nome>
+%%%% 889018 Biglioli Sabrina
+%%%% 917356 Carducci Lorenzo
+%%%% 914396 Coletta Giovanni
 %%%% Type checker minimale per Prolog (interi + variabili + liste + built-in)
 
 :- module(tc, [tc/1, tc_debug_on/0, tc_debug_off/0]).
