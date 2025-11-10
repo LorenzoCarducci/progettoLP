@@ -1,5 +1,5 @@
 %%%% <Matricola> <Cognome> <Nome>
-%%%% Type checker minimale per Prolog (solo interi + variabili)
+%%%% Type checker minimale per Prolog (interi + variabili + liste)
 
 :- module(tc, [tc/1]).
 
@@ -8,11 +8,12 @@ next_type_var_id(0).
 
 /* ============================ ENTRY POINT ============================ */
 % Tipi:
-%   t_int                intero
-%   t_atom               atomo
-%   t_var(Id)            variabile di tipo
-%   t_pred(Name,Arity,ArgsTypes)   tipo di predicato
-
+%   t_int                        intero
+%   t_atom                       atomo
+%   t_var(Id)                    variabile di tipo
+%   t_list(T)                    lista di elementi di tipo T
+%   t_pred(Name,Arity,ArgsTypes) tipo di predicato
+%
 % tc(+File).
 % Esempio:
 %   ?- tc('fact.pl').
@@ -48,11 +49,12 @@ read_terms(Stream, [T|Ts]) :-
     ).
 
 /* ========================= TYPE VAR & TIPI =========================== */
-
 % Tipi:
-%   t_int                intero
-%   t_var(Id)            variabile di tipo
-%   t_pred(Name,Arity,ArgsTypes)   tipo di predicato
+%   t_int
+%   t_atom
+%   t_var(Id)
+%   t_list(T)
+%   t_pred(Name,Arity,ArgsTypes)
 
 fresh_type_var(t_var(Id)) :-
     retract(next_type_var_id(Id0)),
@@ -163,6 +165,19 @@ infer_term_type(Term, VarEnv, Ty, C, C) :-
     var(Term), !,
     lookup_var_type(VarEnv, Term, Ty).
 
+% lista vuota []
+infer_term_type(Term, _VarEnv, t_list(TElem), C, C) :-
+    Term == [], !,
+    fresh_type_var(TElem).
+
+% lista [H|T]
+infer_term_type([H|T], VarEnv, t_list(TElem), CIn, COut) :- !,
+    fresh_type_var(TElem),
+    infer_term_type(H, VarEnv, TH, CIn, C1),
+    infer_term_type(T, VarEnv, TT, C1, C2),
+    % H : TElem, T : list(TElem)
+    COut = [eq(TH, TElem), eq(TT, t_list(TElem)) | C2].
+
 % atomo
 infer_term_type(Term, _VarEnv, t_atom, C, C) :-
     atom(Term), !.
@@ -170,7 +185,6 @@ infer_term_type(Term, _VarEnv, t_atom, C, C) :-
 % qualsiasi altra cosa (per ora): nuova variabile di tipo
 infer_term_type(_Term, _VarEnv, Ty, C, C) :-
     fresh_type_var(Ty).
-
 
 /* ================== VINCOLI PER IL CORPO DELLA CLAUSOLA ============== */
 
@@ -275,8 +289,13 @@ solve_constraints_list([eq(T1,T2)|Cs], SubIn, SubOut, ErrIn, ErrOut) :-
     ).
 
 % unify_type(+T1, +T2, +SubIn, -SubOut, -Errors)
+
 unify_type(t_int, t_int, Sub, Sub, []) :- !.
 unify_type(t_atom, t_atom, Sub, Sub, []) :- !.
+
+% liste
+unify_type(t_list(T1), t_list(T2), SubIn, SubOut, Errs) :- !,
+    unify_type(T1, T2, SubIn, SubOut, Errs).
 
 unify_type(t_var(Id), T, SubIn, SubOut, []) :- !,
     bind_var(Id, T, SubIn, SubOut).
@@ -290,7 +309,6 @@ unify_type(t_pred(N,A,Args1), t_pred(N,A,Args2), SubIn, SubOut, Errs) :- !,
 unify_type(T1, T2, Sub, Sub, [Msg]) :-
     format(string(Msg), "Type mismatch: ~w vs ~w", [T1, T2]).
 
-
 bind_var(Id, T, SubIn, SubOut) :-
     ( T = t_var(Id) ->
         SubOut = SubIn
@@ -301,6 +319,9 @@ bind_var(Id, T, SubIn, SubOut) :-
 
 occurs_in(Id, t_var(Id), _Sub) :- !.
 occurs_in(_Id, t_int, _Sub) :- !, fail.
+occurs_in(_Id, t_atom, _Sub) :- !, fail.
+occurs_in(Id, t_list(T), Sub) :- !,
+    occurs_in(Id, T, Sub).
 occurs_in(Id, t_pred(_,_,Args), Sub) :-
     member(T, Args),
     occurs_in(Id, T, Sub).
@@ -319,6 +340,9 @@ apply_subst_type(Subst, t_var(Id), TOut) :-
     ; TOut = t_var(Id)
     ), !.
 apply_subst_type(_Subst, t_int, t_int) :- !.
+apply_subst_type(_Subst, t_atom, t_atom) :- !.
+apply_subst_type(Subst, t_list(T), t_list(TOut)) :- !,
+    apply_subst_type(Subst, T, TOut).
 apply_subst_type(Subst, t_pred(N,A,Args), t_pred(N,A,ArgsOut)) :- !,
     apply_subst_type_list(Subst, Args, ArgsOut).
 apply_subst_type(_, T, T).
@@ -352,6 +376,9 @@ type_to_atom(t_int, 'integer').
 type_to_atom(t_atom, 'atom').
 type_to_atom(t_var(Id), Atom) :-
     format(atom(Atom), 'T~w', [Id]).
+type_to_atom(t_list(T), Atom) :-
+    type_to_atom(T, ElemAtom),
+    format(atom(Atom), 'list(~w)', [ElemAtom]).
 type_to_atom(t_pred(N,A,_), Atom) :-
     format(atom(Atom), 'pred(~w/~w)', [N,A]).
 
