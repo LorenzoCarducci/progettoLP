@@ -21,7 +21,7 @@ tc_debug_off :-
 % Tipi:
 %   t_int                        intero
 %   t_atom                       atomo
-%   t_bool                       booleano         %%% BOOL
+%   t_bool                       booleano
 %   t_var(Id)                    variabile di tipo
 %   t_list(T)                    lista di elementi di tipo T
 %   t_pred(Name,Arity,ArgsTypes) tipo di predicato
@@ -65,7 +65,7 @@ read_terms(Stream, [T|Ts]) :-
 % Tipi:
 %   t_int
 %   t_atom
-%   t_bool                    %%% BOOL
+%   t_bool
 %   t_var(Id)
 %   t_list(T)
 %   t_pred(Name,Arity,ArgsTypes)
@@ -208,7 +208,7 @@ infer_term_type(Term, VarEnv, Ty, C, C) :-
     var(Term), !,
     lookup_var_type(VarEnv, Term, Ty).
 
-%%% BOOL: costanti booleane true/false riconosciute come t_bool
+% costanti booleane true/false
 infer_term_type(true, _VarEnv, t_bool, C, C) :- !.
 infer_term_type(false, _VarEnv, t_bool, C, C) :- !.
 
@@ -248,7 +248,33 @@ gen_body_constraints(Goal, EnvPred, VarEnv, CIn, COut) :-
 
 % gen_goal_constraints(+Goal, +EnvPred, +VarEnv, +CIn, -COut)
 
-% confronti numerici: >, <, >=, =<, =:=, =\=
+%%% UGUAGLIANZA LOGICA: =, \=, ==, \==
+
+% unificazione logica: =/2
+gen_goal_constraints((A = B), _EnvPred, VarEnv, CIn, COut) :- !,
+    infer_term_type(A, VarEnv, TA, CIn, C1),
+    infer_term_type(B, VarEnv, TB, C1, C2),
+    add_constraint(eq(TA, TB), C2, COut).
+
+% non-unificazione: \=/2
+gen_goal_constraints((A \= B), _EnvPred, VarEnv, CIn, COut) :- !,
+    infer_term_type(A, VarEnv, TA, CIn, C1),
+    infer_term_type(B, VarEnv, TB, C1, C2),
+    add_constraint(eq(TA, TB), C2, COut).
+
+% uguaglianza per identità: ==/2
+gen_goal_constraints((A == B), _EnvPred, VarEnv, CIn, COut) :- !,
+    infer_term_type(A, VarEnv, TA, CIn, C1),
+    infer_term_type(B, VarEnv, TB, C1, C2),
+    add_constraint(eq(TA, TB), C2, COut).
+
+% disuguaglianza per identità: \==/2
+gen_goal_constraints((A \== B), _EnvPred, VarEnv, CIn, COut) :- !,
+    infer_term_type(A, VarEnv, TA, CIn, C1),
+    infer_term_type(B, VarEnv, TB, C1, C2),
+    add_constraint(eq(TA, TB), C2, COut).
+
+%%% confronti numerici: >, <, >=, =<, =:=, =\=
 
 gen_goal_constraints((A > B), _EnvPred, VarEnv, CIn, COut) :- !,
     infer_term_type(A, VarEnv, TA, CIn, C1),
@@ -348,7 +374,7 @@ solve_constraints_list([eq(T1,T2)|Cs], SubIn, SubOut, ErrIn, ErrOut) :-
 % unify_type(+T1, +T2, +SubIn, -SubOut, -Errors)
 unify_type(t_int, t_int, Sub, Sub, []) :- !.
 unify_type(t_atom, t_atom, Sub, Sub, []) :- !.
-unify_type(t_bool, t_bool, Sub, Sub, []) :- !.   %%% BOOL
+unify_type(t_bool, t_bool, Sub, Sub, []) :- !.
 
 % liste
 unify_type(t_list(T1), t_list(T2), SubIn, SubOut, Errs) :- !,
@@ -378,8 +404,8 @@ bind_var(Id, T, SubIn, SubOut) :-
 
 occurs_in(Id, t_var(Id), _Sub) :- !.
 occurs_in(_Id, t_int, _Sub) :- !, fail.
-occurs_in(_Id, t_atom, _Sub) :- !, fail.      %%% BOOL (già gestito)
-occurs_in(_Id, t_bool, _Sub) :- !, fail.      %%% BOOL
+occurs_in(_Id, t_atom, _Sub) :- !, fail.
+occurs_in(_Id, t_bool, _Sub) :- !, fail.
 occurs_in(Id, t_list(T), Sub) :- !,
     occurs_in(Id, T, Sub).
 occurs_in(Id, t_pred(_,_,Args), Sub) :-
@@ -400,8 +426,8 @@ apply_subst_type(Subst, t_var(Id), TOut) :-
     ; TOut = t_var(Id)
     ), !.
 apply_subst_type(_Subst, t_int, t_int) :- !.
-apply_subst_type(_Subst, t_atom, t_atom) :- !.   %%% BOOL
-apply_subst_type(_Subst, t_bool, t_bool) :- !.   %%% BOOL
+apply_subst_type(_Subst, t_atom, t_atom) :- !.
+apply_subst_type(_Subst, t_bool, t_bool) :- !.
 apply_subst_type(Subst, t_list(T), t_list(TOut)) :- !,
     apply_subst_type(Subst, T, TOut).
 apply_subst_type(Subst, t_pred(N,A,Args), t_pred(N,A,ArgsOut)) :- !,
@@ -435,7 +461,7 @@ format_pred_type(Name, _Arity,
 
 type_to_atom(t_int, 'integer').
 type_to_atom(t_atom, 'atom').
-type_to_atom(t_bool, 'bool').                 %%% BOOL
+type_to_atom(t_bool, 'bool').
 type_to_atom(t_var(Id), Atom) :-
     format(atom(Atom), 'T~w', [Id]).
 type_to_atom(t_list(T), Atom) :-
