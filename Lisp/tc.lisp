@@ -1,15 +1,7 @@
 ;;;; 889018 Biglioli Sabrina
 ;;;; 917356 Carducci Lorenzo
 ;;;; 914396 Coletta Giovanni
-;;;; Type checker minimale per Lisp (interi + variabili + liste + built-in)
-
-; (in-package :cl-user)
-
-; (defpackage :tc
-;   (:use :cl)
-;   (:export :tc))
-
-; (in-package :tc)
+;;;; Type checker per Lisp (interi + variabili + liste + built-in)
 
 
 (defun tc (filename)
@@ -83,7 +75,6 @@
            :return-type :bool))
     ht)
   "Tabella dei tipi delle funzioni built-in e delle defun utente note.")
-
 
 
 (defun process-top-level-form (form)
@@ -166,7 +157,6 @@
                        original-expr)))))))
 
 
-
 (defun process-defun-form (form)
   "Analizza una forma (defun ...) e la registra nella *function-table*."
   ;; Forma attesa: (defun name (params...) body...)
@@ -228,7 +218,6 @@
     ;; tutto il resto: per ora tipo sconosciuto
     (t
      :unknown)))
-
 
 
 (defun check-user-function-call (fn args original-expr env)
