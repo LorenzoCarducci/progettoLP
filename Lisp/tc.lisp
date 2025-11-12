@@ -3,6 +3,7 @@
 ;;;; 914396 Coletta Giovanni
 ;;;; Type checker per Lisp (interi + variabili + liste + built-in)
 
+;;;; sto sistemando il codice
 
 (defun tc (filename)
   "Entry point del type checker.
