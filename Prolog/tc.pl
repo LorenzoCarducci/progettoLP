@@ -25,7 +25,7 @@ tc_debug_off :-
 %   t_var(Id)                    variabile di tipo
 %   t_list(T)                    lista di elementi di tipo T
 %   t_pred(Name,Arity,ArgsTypes) tipo di predicato
-
+%
 % tc(+File).
 % Esempio:
 %   ?- tc('fact.pl').
@@ -68,7 +68,7 @@ read_terms(Stream, [T|Ts]) :-
 %   t_bool
 %   t_var(Id)
 %   t_list(T)
-%   t_pred(Name,Arity,ArgsTypes)
+%   t_pred(Name,Arity,ArgTypes)
 
 fresh_type_var(t_var(Id)) :-
     retract(next_type_var_id(Id0)),
@@ -234,15 +234,27 @@ infer_term_type(Term, _VarEnv, t_atom, C, C) :-
 infer_term_type(_Term, _VarEnv, Ty, C, C) :-
     fresh_type_var(Ty).
 
-
 /* ================== VINCOLI PER IL CORPO DELLA CLAUSOLA ============== */
 
 % gen_body_constraints(+Body, +EnvPred, +VarEnv, +CIn, -COut)
 
+% caso base: true non aggiunge vincoli
 gen_body_constraints(true, _EnvPred, _VarEnv, C, C) :- !.
+
+% disgiunzione nel corpo: (G1 ; G2)
+% Entrambi i rami devono essere ben tipati, quindi imponiamo i vincoli
+% di G1 e di G2 a partire dallo stesso insieme iniziale CIn.
+gen_body_constraints((G1 ; G2), EnvPred, VarEnv, CIn, COut) :- !,
+    gen_body_constraints(G1, EnvPred, VarEnv, CIn, C1),
+    gen_body_constraints(G2, EnvPred, VarEnv, CIn, C2),
+    append(C1, C2, COut).
+
+% congiunzione nel corpo: (G1, Gs)
 gen_body_constraints((G1, Gs), EnvPred, VarEnv, CIn, COut) :- !,
     gen_goal_constraints(G1, EnvPred, VarEnv, CIn, C1),
     gen_body_constraints(Gs, EnvPred, VarEnv, C1, COut).
+
+% caso generale: singolo goal
 gen_body_constraints(Goal, EnvPred, VarEnv, CIn, COut) :-
     gen_goal_constraints(Goal, EnvPred, VarEnv, CIn, COut).
 
@@ -320,6 +332,18 @@ gen_goal_constraints((X is Expr), _EnvPred, VarEnv, CIn, COut) :- !,
     add_constraint(eq(TX, t_int), C2, C3),
     add_constraint(eq(TExpr, t_int), C3, COut).
 
+% cut: non influisce sui tipi
+gen_goal_constraints(!, _EnvPred, _VarEnv, C, C) :- !.
+
+% fail: non aggiunge vincoli di tipo
+gen_goal_constraints(fail, _EnvPred, _VarEnv, C, C) :- !.
+
+% negazione come fallimento: \+ G
+% Tipizziamo il goal G come se fosse nel corpo: deve essere ben tipato,
+% ma la negazione in sé non introduce vincoli extra sui tipi.
+gen_goal_constraints(\+ G, EnvPred, VarEnv, CIn, COut) :- !,
+    gen_body_constraints(G, EnvPred, VarEnv, CIn, COut).
+
 % chiamata a predicato (utente o builtin): p(...)
 
 gen_goal_constraints(Goal, EnvPred, VarEnv, CIn, COut) :-
@@ -393,7 +417,6 @@ unify_type(T1, T2, Sub, Sub, [Msg]) :-
     debug_print_mismatch(T1, T2),
     format(string(Msg), "Type mismatch: ~w vs ~w", [T1, T2]).
 
-
 bind_var(Id, T, SubIn, SubOut) :-
     ( T = t_var(Id) ->
         SubOut = SubIn
@@ -447,10 +470,19 @@ apply_subst_env_entry(Subst, pred(N,A)-TypeIn, pred(N,A)-TypeOut) :-
 
 /* ================= STAMPA TIPI ED ERRORI ============================ */
 
+% Predicati built-in che NON vogliamo stampare
+is_builtin(member/2).
+is_builtin(length/2).
+is_builtin(append/3).
+is_builtin(is_list/1).
+
 print_env_types([]).
 print_env_types([pred(Name,Arity)-Type | Rest]) :-
-    format_pred_type(Name, Arity, Type, String),
-    format("~w~n", [String]),
+    (   is_builtin(Name/Arity)
+    ->  true   % non stampare i built-in
+    ;   format_pred_type(Name, Arity, Type, String),
+        format("~w~n", [String])
+    ),
     print_env_types(Rest).
 
 format_pred_type(Name, _Arity,
