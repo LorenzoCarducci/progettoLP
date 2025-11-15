@@ -5,71 +5,15 @@
   optional-arg-types  ; lista tipi argomenti opzionali
   return-type)        ; tipo di ritorno
 
-(defun add-function-type (name arg-types return-type)
-  (setf (gethash name *function-type-env*)
-        (make-function-type
-          :arg-types arg-types
-          :optional-arg-types '()
-          :return-type return-type)))
-
-
-(defun register-common-lisp-types ()
-  ;; Operazioni base su liste
-  (add-function-type 'car '(t) 't)
-  (add-function-type 'cdr '(t) 't)
-  (add-function-type 'cadr '(t) 't)
-  (add-function-type 'cons '(t t) 'list)
-  (add-function-type 'list '(*t) 'list)
-
-  ;; Predicati di base
-  (add-function-type 'eq '(t t) 'boolean)
-  (add-function-type 'eql '(t t) 'boolean)
-  (add-function-type 'equal '(t t) 'boolean)
-  (add-function-type 'null '(t) 'boolean)
-  (add-function-type 'consp '(t) 'boolean)
-
-  ;; Operazioni aritmetiche
-  (add-function-type '+ '(*integer) 'integer)
-  (add-function-type '- '(*integer) 'integer)
-  (add-function-type '* '(*integer) 'integer)
-  (add-function-type '/ '(*integer) 'integer)
-  (add-function-type '> '(integer integer) 'boolean)
-  (add-function-type '< '(integer integer) 'boolean)
-  (add-function-type '= '(integer integer) 'boolean)
-
-  ;; Controllo logico
-  (add-function-type 'and '(*t) 't)
-  (add-function-type 'or '(*t) 't)
-  (add-function-type 'not '(t) 'boolean)
-
-  ;; Assegnazione e variabili
-  (add-function-type 'setf '(t t) 't)
-  (add-function-type 'setq '(symbol t) 't)
-
-  ;; Funzioni generiche
-  (add-function-type 'format '(*t) 't)
-  (add-function-type 'print '(t) 't)
-  (add-function-type 'write '(t) 't)
-
-  ;; Costruzione dati
-  (add-function-type 'make-hash-table '() 't)
-  (add-function-type 'gethash '(t t) 't)
-
-  ;; File I/O
-  (add-function-type 'with-open-file '(*t) 't)
-
-  ;; Contesto funzionale
-  (add-function-type 'function '(t) 't)
-  (add-function-type 'apply '(*t) 't)
-
-  ;; Looping
-  (add-function-type 'loop '(*t) 't)
-  (add-function-type 'dolist '(*t) 't)
-  (add-function-type 'dotimes '(*t) 't)
-
-  ;; Strutture dati
-  (add-function-type 'defstruct '(*t) 't)
-)
+(defparameter *known-common-lisp-heads*
+  '(defstruct defparameter setf setq
+    make-hash-table gethash
+    with-open-file
+    format print write
+    loop dolist dotimes
+    function apply
+    labels let* cond
+    mapcar))
 
 
 (defparameter *function-type-env*
@@ -248,12 +192,20 @@
          (uinfo
           (check-user-function-call fn args)
           :unknown)
-         ;; funzione completamente sconosciuta
+        ;; funzione completamente sconosciuta
          (t
-          (format t "Warning: funzione sconosciuta ~S.~%" fn)
-          :unknown))))
-    ))
+          (if (and (symbolp fn)
+                   (member fn *known-common-lisp-heads*))
+              ;; È una forma di Common Lisp che usiamo nel nostro tc.lisp:
+              ;; non facciamo warning e non controlliamo i tipi davvero.
+              :unknown
+              ;; Tutto il resto: vero warning.
+              (progn
+                (format t "Warning: funzione sconosciuta ~S.~%" fn)
+                :unknown))))
 
+    ))
+  ))
 
 
 (defun check-function-call (fn ftype args env)
