@@ -1,3 +1,5 @@
+;;;; TYPE CHECKER BASE FUNZIONANTE. Risultato sul codice stesso: https://imgur.com/a/5OtrHph
+
 ;;;; 917356 Carducci Lorenzo
 ;;;; Type checker minimale per Common Lisp in Common Lisp
 ;;;; (Hindley-Milner style per un piccolo sottoinsieme di CL)
@@ -335,14 +337,29 @@
 
 (defun infer-symbol (sym env)
   (cond
-    ;; boolean
+    ;; booleani
     ((or (eq sym 't) (eq sym 'nil))
      (bool-type))
+
+    ;; keyword: le trattiamo come simboli costanti
+    ((keywordp sym)
+     (sym-type))
+
+    ;; variabili globali in stile *foo* : le trattiamo come
+    ;; “qualcosa di ben tipato ma non controllato”
+    ((let* ((name (symbol-name sym))
+            (len  (length name)))
+       (and (> len 1)
+            (char= (char name 0) #\*)
+            (char= (char name (1- len)) #\*)))
+     (fresh-type-var))
+
     (t
      (let ((scheme (env-lookup env sym)))
        (unless scheme
          (tc-signal-error "Unbound symbol ~S" sym))
        (instantiate scheme)))))
+
 
 (defun infer-quote (form env)
   (declare (ignore env))
@@ -356,18 +373,21 @@
       (t (fresh-type-var)))))
 
 (defun infer-if (form env)
-  ;; (if test then else)
-  (destructuring-bind (_ test then &optional else) form
-    (declare (ignore _))
+  ;; form = (if test then [else])
+  (let ((test (second form))
+        (then (third form))
+        (else (fourth form)))
+    (unless (and test then)
+      (tc-signal-error "Malformed IF: ~A" (expr->string form)))
     (let ((t-ty (infer-expr test env)))
-      ;; per semplicità richiediamo booleano come condizione
       (unify t-ty (bool-type)))
     (let ((then-ty (infer-expr then env))
           (else-ty (if else
                        (infer-expr else env)
-                       (bool-type)))) ; tipo di NIL se non c'è else, grossolano
+                       (bool-type))))
       (unify then-ty else-ty)
       then-ty)))
+
 
 (defun fun-type-required (fun-ty) (second fun-ty))
 (defun fun-type-optional (fun-ty) (third fun-ty))
@@ -375,70 +395,123 @@
 
 (defun infer-call (form env)
   "Inferenza per una chiamata di funzione (f arg1 arg2 ...)."
-  (let* ((fn   (first form))
-         (args (rest form)))
-    (unless (symbolp fn)
-      (tc-signal-error
-       "Only simple function calls with symbol operator are supported: ~S" form))
+  (block infer-call
+    (let* ((fn   (first form))
+           (args (rest form)))
 
-    ;; Caso speciale: FORMAT
-    ;; ----------------------
-    ;; Non controlliamo arità né tipo complessivo di FORMAT,
-    ;; ma analizziamo comunque tutti gli argomenti, così dentro
-    ;; viene comunque visto l'errore in (fact 'six).
-    (when (eq fn 'format)
-      (dolist (a args)
-        (infer-expr a env))  ; qui dentro verrà visto (fact 'six) se è sbagliato
-      (return-from infer-call (fresh-type-var)))
+      ;; -------------------------------------------------------
+      ;; Se l'operatore non è un simbolo → NON è una chiamata
+      ;; di funzione, ma una struttura-dato tipo ((msg :initarg ...)).
+      ;; Type-checkiamo solo i sottoform che sono liste.
+      ;; -------------------------------------------------------
 
-    ;; Caso generale
-    (let ((scheme (env-lookup env fn)))
-      ;; Se non è nell'ambiente del type checker ma è una funzione/macro
-      ;; già definita in Common Lisp (fboundp T), la trattiamo come built-in
-      ;; "opaca": controlliamo solo gli argomenti, senza imporre vincoli
-      ;; sul tipo della funzione stessa.
-      (unless scheme
-        (when (fboundp fn)
-          ;; controlliamo comunque gli argomenti (per scovare eventuali errori
-          ;; di tipo dentro)
-          (dolist (a args)
-            (infer-expr a env))
-          (return-from infer-call (fresh-type-var)))
-        ;; Se non è nemmeno fboundp, allora è davvero sconosciuta.
-        (tc-signal-error "Unknown function ~S" fn))
+      ;; 0) operatore non simbolo → struttura dati, non funzione
+      (unless (symbolp fn)
+        (dolist (sf args)
+          (when (consp sf)
+            (infer-expr sf env)))
+        (return-from infer-call (fresh-type-var)))
 
-      ;; Da qui in poi: funzione "nota" al nostro type checker
-      (let* ((fun-ty    (instantiate scheme))
-             (req       (fun-type-required fun-ty))
-             (opt       (fun-type-optional fun-ty))
-             (ret       (fun-type-ret fun-ty))
-             (min-arity (length req))
-             (max-arity (+ min-arity (length opt)))
-             (n-args    (length args)))
-        (when (or (< n-args min-arity) (> n-args max-arity))
-          (tc-signal-error
-           "Arity mismatch in call ~A: expected ~D-~D args, got ~D"
-           (expr->string form) min-arity max-arity n-args))
-        ;; unifichiamo argomenti, ma se qualcosa va storto
-        ;; riformattiamo il messaggio nello stile della traccia
-        (let ((param-types (append req opt)))
-          (loop for arg in args
-                for pty in param-types
-                do
-                  (let ((aty (infer-expr arg env)))
-                    (handler-case
-                        (unify pty aty)
-                      (tc-error (c)
-                        (declare (ignore c))
-                        (let* ((expected-str (type->name-string pty))
-                               (arg-str      (expr->string arg))
-                               (call-str     (expr->string form)))
-                          (tc-signal-error
-                           "'~A' is not of type '~A' in call ~A"
-                           arg-str expected-str call-str)))))))
-        (apply-subst ret)))))
+      ;; 0.5) operatore keyword → opzione tipo :report
+      (when (keywordp fn)
+        (dolist (sf args)
+          (when (and (consp sf) (eq (first sf) 'lambda))
+            (infer-expr sf env)))
+        (return-from infer-call (fresh-type-var)))
 
+      ;; 0.7) CASO SPECIALE: DEFINE-CONDITION
+      ;; trattiamo solo le lambda dentro alle opzioni, il resto è dato
+      (when (eq fn 'define-condition)
+        (dolist (sf args)
+          (when (and (consp sf) (eq (first sf) 'lambda))
+            (infer-expr sf env)))
+        (return-from infer-call (fresh-type-var)))
 
+      ;; -------------------------------------------------------
+      ;; CASO SPECIALE: HANDLER-CASE
+      ;; (handler-case expr
+      ;;   (cond-type (var) body...)
+      ;;   (altro-type (v) body...) ...)
+      ;; -------------------------------------------------------
+      (when (eq fn 'handler-case)
+        (let ((protected (first args))
+              (clauses   (rest args)))
+          ;; espressione protetta
+          (infer-expr protected env)
+          ;; per ogni clausola, ignoriamo nome condition e binding,
+          ;; e verifichiamo solo i body
+          (dolist (clause clauses)
+            (when (consp clause)
+              (destructuring-bind (cond-type bindings &rest body) clause
+                (declare (ignore cond-type bindings))
+                (infer-progn body env))))
+          (return-from infer-call (fresh-type-var))))
+
+      ;; -------------------------------------------------------
+      ;; CASO GENERICO: macro o special form del Lisp host
+      ;; Esempi: define-condition, when, unless, and, or, ...
+      ;; Analizziamo SOLO i sottoform che sono liste.
+      ;; -------------------------------------------------------
+      (when (or (special-operator-p fn)
+                (macro-function fn))
+        (dolist (sf args)
+          (when (consp sf)
+            (infer-expr sf env)))
+        (return-from infer-call (fresh-type-var)))
+
+      ;; -------------------------------------------------------
+      ;; CASO SPECIALE: FORMAT
+      ;; Non controlliamo arità/tipo di FORMAT, ma analizziamo
+      ;; comunque tutti gli argomenti.
+      ;; -------------------------------------------------------
+      (when (eq fn 'format)
+        (dolist (a args)
+          (infer-expr a env))
+        (return-from infer-call (fresh-type-var)))
+
+      ;; -------------------------------------------------------
+      ;; CASO GENERALE: vera funzione (nostra o del CL host)
+      ;; -------------------------------------------------------
+      (let ((scheme (env-lookup env fn)))
+        ;; Se non è nel nostro env ma è una funzione definita nel CL host
+        ;; (es. PRINT, ERROR, ecc.), la trattiamo come "esterna":
+        ;; checkiamo solo gli argomenti, ignorando tipo/aritá della funzione.
+        (unless scheme
+          (when (fboundp fn)
+            (dolist (a args)
+              (infer-expr a env))
+            (return-from infer-call (fresh-type-var)))
+          (tc-signal-error "Unknown function ~S" fn))
+
+        ;; Qui FN è una nostra funzione con tipo noto
+        (let* ((fun-ty    (instantiate scheme))
+               (req       (fun-type-required fun-ty))
+               (opt       (fun-type-optional fun-ty))
+               (ret       (fun-type-ret fun-ty))
+               (min-arity (length req))
+               (max-arity (+ min-arity (length opt)))
+               (n-args    (length args)))
+          (when (or (< n-args min-arity) (> n-args max-arity))
+            (tc-signal-error
+             "Arity mismatch in call ~A: expected ~D-~D args, got ~D"
+             (expr->string form) min-arity max-arity n-args))
+          ;; unifichiamo argomenti; se qualcosa va storto formattiamo il messaggio
+          (let ((param-types (append req opt)))
+            (loop for arg in args
+                  for pty in param-types
+                  do
+                    (let ((aty (infer-expr arg env)))
+                      (handler-case
+                          (unify pty aty)
+                        (tc-error (c)
+                          (declare (ignore c))
+                          (let* ((expected-str (type->name-string pty))
+                                 (arg-str      (expr->string arg))
+                                 (call-str     (expr->string form)))
+                            (tc-signal-error
+                             "'~A' is not of type '~A' in call ~A"
+                             arg-str expected-str call-str)))))))
+          (apply-subst ret))))))
 
 
 (defun infer-expr (expr env)
@@ -543,28 +616,26 @@
      env)))
 
 (defun tc (filename)
-  "Type checker principale. Usa un sottoinsieme di Common Lisp +
-   un sistema Hindley-Milner semplificato.
-   In caso di errore di tipo stampa 'Error: ...' e NON entra nel debugger."
+  "Type checker principale.
+   NON si ferma al primo errore: stampa e continua."
   (format t ";;; Type checking '~A'.~%~%" filename)
   (let ((*subst* nil)
         (*next-type-var-id* 0)
         (*print-case* :downcase)
         (*print-pretty* t))
-    (handler-case
-        (let ((env (initial-env)))
-          (with-open-file (in filename :direction :input)
-            (loop for form = (read in nil :eof)
-                  until (eq form :eof)
-                  do (setf env (process-top-form form env))))
-          t)      ; se tutto ok, restituisce T
-      (tc-error (c)
-        ;; errori “previsti” del type checker
-        (format t "Error: ~A~%" (tc-error-msg c))
-        nil)
-      (error (c)
-        ;; qualunque altra cosa inaspettata finisce qui,
-        ;; ma comunque senza debugger
-        (format t "Internal error: ~A~%" c)
-        nil))))
+    (let ((env (initial-env)))
+      (with-open-file (in filename :direction :input)
+        ;; ogni forma top-level è gestita separatamente
+        (loop for form = (read in nil :eof)
+              until (eq form :eof)
+              do
+                (handler-case
+                    (setf env (process-top-form form env))
+                  (tc-error (c)
+                    (format t "Error: ~A~%" (tc-error-msg c)))
+                  (error (c)
+                    ;; errori imprevisti: li segnaliamo ma continuiamo
+                    (format t "Internal error: ~A~%" c))))))
+    t))
+
 
