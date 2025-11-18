@@ -1,6 +1,7 @@
-;;;; TYPE CHECKER BASE FUNZIONANTE. Risultato sul codice stesso: https://imgur.com/a/5OtrHph
-
+;;;; 889018 Biglioli Sabrina
 ;;;; 917356 Carducci Lorenzo
+;;;; 914396 Coletta Giovanni
+
 ;;;; Type checker minimale per Common Lisp in Common Lisp
 ;;;; (Hindley-Milner style per un piccolo sottoinsieme di CL)
 
@@ -319,6 +320,48 @@
                                        (fun-type (list (int-type) (int-type))
                                                  nil
                                                  (int-type)))))
+    ;; - : integer integer -> integer  (semplificato)
+    (setf env (env-extend env '-
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (int-type)))))
+    ;; = : integer integer -> boolean  (confronto numerico semplificato)
+    (setf env (env-extend env '=
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (bool-type)))))
+    ;; /= : integer integer -> boolean
+    (setf env (env-extend env '/=
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (bool-type)))))
+    ;; < : integer integer -> boolean
+    (setf env (env-extend env '<
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (bool-type)))))
+    ;; <= : integer integer -> boolean
+    (setf env (env-extend env '<=
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (bool-type)))))
+    ;; > : integer integer -> boolean
+    (setf env (env-extend env '>
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (bool-type)))))
+    ;; >= : integer integer -> boolean
+    (setf env (env-extend env '>=
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (bool-type)))))
     ;; format: molto semplificato, non facciamo type checking sugli argomenti
     ;; (format t "..." 6 (fact 6))
     ;;    tipo: (stream/string &rest t) -> t
@@ -637,5 +680,3 @@
                     ;; errori imprevisti: li segnaliamo ma continuiamo
                     (format t "Internal error: ~A~%" c))))))
     t))
-
-
