@@ -9,17 +9,15 @@
 ;;;; ============================================================
 ;;;; ERRORI DEL TYPE CHECKER (NO DEBUGGER)
 ;;;; ============================================================
-;; Definisco un tipo di errore personalizzato per il type checker.
 (define-condition tc-error (error)
-  ((msg :initarg :msg :reader tc-error-msg))
-  (:report (lambda (c stream)
-             (format stream "~A" (tc-error-msg c)))))
+    "Stampa errore personalizzato per il type checker."
+    ((msg :initarg :msg :reader tc-error-msg))
+    (:report (lambda (c stream)
+                (format stream "~A" (tc-error-msg c)))))
 
-;; Funzione per segnalare un errore di type checking.
 (defun tc-signal-error (fmt &rest args)
-  (error 'tc-error :msg (apply #'format nil fmt args)))
-
-
+    "Segnala un errore di type checking."
+    (error 'tc-error :msg (apply #'format nil fmt args)))
 
 
 ;;;; ============================================================
@@ -53,8 +51,6 @@
   (and (consp ty) (eq (first ty) :fun)))
 
 
-
-
 ;;;; ============================================================
 ;;;; SCHEMI DI TIPO E AMBIENTE
 ;;;; ============================================================
@@ -77,8 +73,6 @@
 (defun env-lookup (env name)
   (let ((cell (assoc name env)))
     (when cell (cdr cell))))
-
-
 
 
 ;;;; ============================================================
@@ -180,8 +174,6 @@
      (tc-signal-error "Type mismatch: ~A vs ~A" t1 t2))))
 
 
-
-
 ;;;; ============================================================
 ;;;; INSIEMI DI VARIABILI DI TIPO
 ;;;; ============================================================
@@ -243,8 +235,6 @@
   (let* ((vars (scheme-vars scheme))
          (subst (mapcar (lambda (v) (cons v (fresh-type-var))) vars)))
     (tsubst-with (scheme-type scheme) subst)))
-
-
 
 
 ;;;; ============================================================
@@ -406,8 +396,6 @@
     env))
 
 
-
-
 ;;;; ============================================================
 ;;;; INFERENZA DEI TIPI PER ESPRESSIONI
 ;;;; ============================================================
@@ -427,8 +415,8 @@
     ((keywordp sym)
      (sym-type))
 
-    ;; variabili globali in stile *foo* : le trattiamo come
-    ;; “qualcosa di ben tipato ma non controllato”
+    ;; variabili globali del tipo *foo*: le consideriamo ben tipate,
+    ;; ma senza controllarne davvero il tipo
     ((let* ((name (symbol-name sym))
             (len  (length name)))
        (and (> len 1)
@@ -487,21 +475,21 @@
       ;; Type-checking solo per i sottoform che sono liste.
       ;; -------------------------------------------------------
 
-      ;; 0) operatore non simbolo → struttura dati, non funzione
+      ;; 1) operatore non simbolo → struttura dati, non funzione
       (unless (symbolp fn)
         (dolist (sf args)
           (when (consp sf)
             (infer-expr sf env)))
         (return-from infer-call (fresh-type-var)))
 
-      ;; 0.5) operatore keyword → opzione tipo :report
+      ;; 2) operatore keyword → opzione tipo :report
       (when (keywordp fn)
         (dolist (sf args)
           (when (and (consp sf) (eq (first sf) 'lambda))
             (infer-expr sf env)))
         (return-from infer-call (fresh-type-var)))
 
-      ;; 0.7) CASO SPECIALE: DEFINE-CONDITION
+      ;; 3) CASO SPECIALE: DEFINE-CONDITION
       ;; trattiamo solo le lambda dentro alle opzioni, il resto è dato
       (when (eq fn 'define-condition)
         (dolist (sf args)
@@ -574,7 +562,7 @@
             (tc-signal-error
              "Arity mismatch in call ~A: expected ~D-~D args, got ~D"
              (expr->string form) min-arity max-arity n-args))
-          ;; unifichiamo argomenti; se qualcosa va storto formattiamo il messaggio
+          ;; unifichiamo argomenti; in caso di errore, stampiamo il messaggio formattato
           (let ((param-types (append req opt)))
             (loop for arg in args
                   for pty in param-types
@@ -608,19 +596,17 @@
      (fresh-type-var))))
 
 (defun infer-progn (forms env)
-  "Tipo di una sequenza: tipo dell'ultima espressione."
+  "Valuta ogni espressione e restituisce il tipo dell'ultima della lista."
   (let ((result-type (bool-type)))
     (dolist (f forms)
       (setf result-type (infer-expr f env)))
     result-type))
 
 
-
-
 ;;;; ============================================================
 ;;;; INFERENZA PER DEFUN (top-level)
 ;;;; ============================================================
-;; Gestisco le DEFUN di livello top: analizzo la lista di parametri,
+;; Gestisco le DEFUN di top-level: analizzo la lista di parametri,
 ;; assegno variabili di tipo agli argomenti e al valore di ritorno,
 ;; inferisco il tipo del corpo (supportando la ricorsione) e
 ;; aggiorno l'ambiente con il tipo della funzione.
@@ -683,14 +669,11 @@
               (values new-env generalized-fun-type))))))))
 
 
-
-
 ;;;; ============================================================
-;;;; DRIVER PRINCIPALE: (tc "file.lisp")
+;;;; FUNZIONE PRINCIPALE: (tc "file.lisp")
 ;;;; ============================================================
-;; Driver principale del type checker: legge il file
-;; forma per forma, fa il type checking di ogni top-level e stampa
-;; i tipi delle funzioni o gli eventuali errori.
+;; Funzione principale del type checker: legge il file e controlla i tipi di ogni forma top-level.
+;; Stampa i tipi delle funzioni o gli eventuali errori.
 
 (defun process-top-form (form env)
   "Processa una forma top-level. Restituisce il nuovo env."
@@ -706,8 +689,7 @@
      env)))
 
 (defun tc (filename)
-  "Type checker principale.
-   NON si ferma al primo errore: stampa e continua."
+  "Funzione principale del Type checker."
   (format t ";;; Type checking '~A'.~%~%" filename)
   (let ((*subst* nil)
         (*next-type-var-id* 0)
