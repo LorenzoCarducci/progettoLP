@@ -303,13 +303,23 @@
     ;; zerop : integer -> boolean
     (setf env (env-extend env 'zerop
                           (make-scheme nil
-                                       (fun-type (list (int-type)) nil (bool-type)))))
+                                       (fun-type (list (int-type)) 
+                                                 nil 
+                                                 (bool-type)))))
     ;; 1-   : integer -> integer
     (setf env (env-extend env '1-
                           (make-scheme nil
-                                       (fun-type (list (int-type)) nil (int-type)))))
+                                       (fun-type (list (int-type)) 
+                                                 nil 
+                                                 (int-type)))))
     ;; + : integer integer -> integer  (semplificato)
     (setf env (env-extend env '+
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (int-type)))))
+    ;; - : integer integer -> integer  (semplificato)
+    (setf env (env-extend env '-
                           (make-scheme nil
                                        (fun-type (list (int-type) (int-type))
                                                  nil
@@ -320,8 +330,8 @@
                                        (fun-type (list (int-type) (int-type))
                                                  nil
                                                  (int-type)))))
-    ;; - : integer integer -> integer  (semplificato)
-    (setf env (env-extend env '-
+    ;; / : integer integer -> integer  (semplificato)
+    (setf env (env-extend env '/
                           (make-scheme nil
                                        (fun-type (list (int-type) (int-type))
                                                  nil
