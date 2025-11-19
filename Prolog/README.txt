@@ -84,6 +84,6 @@ t_pred(Name, Arity, ArgsTypes) – tipo dei predicati
 - Se si esegue tc('tc.pl') compaiono molti errori di tipo, in quanto usa strutture molto generiche (vincoli, sostituzioni, liste di liste, meta-termini).Il sistema di tipi minimale non riesce a tipare queste strutture in modo coerente.
 - Il type checker incontra difficoltà nell'analizzare strutture complesse come liste annidate o variabili dentro altre variabili, rendendo complicato determinare i tipi quando queste strutture sono presenti, come nel caso del proprio codice interno.
 
-8. Requisiti
+7. Requisiti
 
 -   SWI-Prolog
