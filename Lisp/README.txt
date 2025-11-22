@@ -1,3 +1,5 @@
+README - Type checker minimale per Common Lisp
+
 1. INTRODUZIONE
     Il programma implementa un type checker semplice, basato sulle idee principali del sistema di tipi di Hindley–Milner, 
     adattato al linguaggio Common Lisp.
@@ -22,6 +24,9 @@
         - eventuali errori
 
     Il type checker non si ferma al primo errore: processa l’intero file e mostra tutte le anomalie trovate.
+
+    Esempio:
+        
 
 
 3. FUNZIONALITA' IMPLEMENTATE
@@ -104,8 +109,13 @@
 
     Il type checker continua dopo un errore, per mostrare tutte le anomalie nel file.
 
-5. Limitazioni note
+
+5. LIMITAZIONI NOTE
     - Le lambda expressions non sono trattate come valori di prima classe (ad es. (lambda ...) ritorna un tipo variabile generico).
     - Le forme let, let*, labels non introducono un ambiente locale completo: vengono comunque analizzate nei sottoform, quindi gli errori di tipo emergono.
     - Non viene eseguita una tipizzazione approfondita del condition system (handler-case, define-condition).
     - L’analisi delle liste tramite quote ('(1 2 3)) assume liste omogenee con tipo generico.
+
+
+6. REQUISITI
+    - Interprete Common Lisp (consigliato Lispworks).

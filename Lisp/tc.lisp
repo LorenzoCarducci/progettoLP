@@ -3,18 +3,16 @@
 ;;;; 914396 Coletta Giovanni
 ;;;; Type checker per Lisp (interi + variabili + liste + built-in)
 
-;;;; sto sistemando il codice
-
 (defun tc (filename)
-  "Entry point del type checker.
-   Per ora: legge il file e mostra le forme top-level."
+  "Entry point del type checker con reporting."
+  (tc-reset-report)
   (format t ";;; Type checking '~A'.~%~%" filename)
   (let ((forms (read-all-forms-from-file filename)))
-    ;; Per ora, processiamo le forme una alla volta
     (dolist (form forms)
       (process-top-level-form form)))
-  ;; In futuro potremmo restituire T/NIL a seconda del successo
-  t)
+  (tc-print-summary)
+  (if (null *tc-errors*) t nil))
+
 
 
 (defun read-all-forms-from-file (filename)
@@ -100,7 +98,9 @@
 
 (defun type-check-expression (expr)
   "Controllo minimalista delle espressioni.
-   Usa *function-type-env* per controllare le chiamate a funzioni note."
+   Usa *function-type-env* per controllare le chiamate a funzioni note
+   e *function-table* per controllare almeno l'arità delle funzioni
+   definite dall'utente."
   (cond
     ;; numeri, simboli, stringhe, NIL da soli: niente da controllare
     ((or (integerp expr)
@@ -121,41 +121,62 @@
        ;; prima controlliamo ricorsivamente tutti gli argomenti
        (dolist (a args)
          (type-check-expression a))
-       ;; poi, se conosciamo il tipo della funzione, controlliamo gli argomenti
-       (let ((ftype (gethash fn *function-type-env*)))
-         (when ftype
-           (check-function-call fn ftype args expr)))))
+       ;; poi, se conosciamo qualcosa sulla funzione, facciamo i controlli
+       (let* ((ftype     (gethash fn *function-type-env*))
+              (user-info (gethash fn *function-table*)))
+         (cond
+           ;; se abbiamo info di tipo, usiamo il controllo di tipo completo
+           (ftype
+            (check-function-call fn ftype args expr))
+           ;; altrimenti, se è una funzione definita dall'utente, controlliamo almeno l'arità
+           (user-info
+            (check-user-function-call fn args expr nil))
+           ;; altrimenti non sappiamo nulla: nessun controllo extra
+           (t
+            nil)))))
     (t
      nil)))
 
 
-(defun check-function-call (fn ftype args original-expr)
-  "Controlla numero di argomenti e tipo per una funzione nota in *function-type-env*."
-  (let* ((req   (function-type-arg-types ftype))
-         (opt   (function-type-optional-arg-types ftype))
-         (nreq  (length req))
-         (nopt  (length opt))
-         (nargs (length args)))
-    ;; Controllo arità
-    (when (< nargs nreq)
-      (format t "Error: funzione ~A chiamata con ~D argomenti, ma ne richiede almeno ~D.~%  Espressione: ~S~%"
-              fn nargs nreq original-expr))
-    (when (> nargs (+ nreq nopt))
-      (format t "Error: funzione ~A chiamata con ~D argomenti, ma ne accetta al massimo ~D.~%  Espressione: ~S~%"
-              fn nargs (+ nreq nopt) original-expr))
-    ;; Controllo tipi degli argomenti che sappiamo tipare
-    (loop
-      for arg in args
-      for expected-type in (append req opt)
-      do (when expected-type
-           (let ((actual-type (infer-type arg)))
-             ;; se non riusciamo a inferire (:unknown) non diciamo nulla
-             (when (and (not (eq actual-type :unknown))
-                        (not (eq actual-type expected-type)))
-               (format t "Error: '~A' is not of type '~(~A~)' in call ~S~%"
-                       (display-arg arg)
-                       expected-type
-                       original-expr)))))))
+(defun check-function-call (fn-symbol args)
+  "Controlla una chiamata a funzione/built-in secondo *function-type-env*.
+   Colleziona le signature viste e accumula gli errori invece di stamparli subito."
+  (let* ((fty (gethash fn-symbol *function-type-env*))
+         (req (and fty (function-type-arg-types fty)))
+         (opt (and fty (function-type-optional-arg-types fty))))
+    (unless fty
+      ;; Se non abbiamo tipi noti per FN, non imponiamo vincoli tipali
+      ;; ma registriamo comunque la call con i tipi inferiti.
+      (let ((actuals (mapcar #'infer-type args)))
+        (tc-note-call fn-symbol actuals))
+      (return-from check-function-call t))
+
+    ;; Arity check 'soft': se troppi/pochi argomenti, errore.
+    (let* ((min (length req))
+           (max (+ (length req) (length opt)))
+           (arity (length args)))
+      (when (or (< arity min) (> arity max))
+        (tc-note-error "Wrong arity for ~A: got ~D, expected ~D..~D"
+                       fn-symbol arity min max)
+        (return-from check-function-call nil)))
+
+    ;; Abbiniamo i tipi attesi ai reali
+    (let* ((expected (append req (subseq opt 0 (max 0 (- (length args) (length req))))))
+           (actuals  (mapcar #'infer-type args))
+           (ok t))
+      ;; registra la chiamata per il riepilogo
+      (tc-note-call fn-symbol actuals)
+
+      ;; verifica puntuale tipo per tipo (se :unknown non segnala)
+      (loop for a in actuals
+            for e in expected
+            for orig in args
+            do (when (and (not (eq a :unknown)) (not (eql a e)))
+                 (setf ok nil)
+                 (tc-note-error "'~A' is not of type '~(~A~)' in call ~S"
+                                (display-arg orig) e (cons fn-symbol args))))
+      ok)))
+
 
 
 (defun process-defun-form (form)
@@ -224,17 +245,22 @@
 (defun check-user-function-call (fn args original-expr env)
   "Controlla il numero di argomenti di una chiamata a funzione definita dall'utente."
   (declare (ignore env)) ; lo useremo quando controlleremo davvero i tipi
-  (let* ((info  (gethash fn *function-table*))
-         (nargs (length args))
-         (min   (function-info-min-arity info))
-         (max   (function-info-max-arity info)))
-    (when (< nargs min)
-      (format t "Error: funzione ~A chiamata con ~D argomenti, ma ne richiede almeno ~D.~%  Espressione: ~S~%"
-              fn nargs min original-expr))
-    (when (> nargs max)
-      (format t "Error: funzione ~A chiamata con ~D argomenti, ma ne accetta al massimo ~D.~%  Espressione: ~S~%"
-              fn nargs max original-expr))
-    ;; In futuro, qui controlleremo i tipi degli argomenti e il tipo di ritorno
+  (let* ((info (gethash fn *function-table*)))
+    (when info
+      (let* ((nargs (length args))
+             (min   (function-info-min-arity info))
+             (max   (function-info-max-arity info)))
+        ;; troppo pochi argomenti
+        (when (< nargs min)
+          (format t "Error: funzione ~A chiamata con ~D argomenti, \
+ma ne richiede almeno ~D.~%  Espressione: ~S~%"
+                  fn nargs min original-expr))
+        ;; troppi argomenti
+        (when (> nargs max)
+          (format t "Error: funzione ~A chiamata con ~D argomenti, \
+ma ne accetta al massimo ~D.~%  Espressione: ~S~%"
+                  fn nargs max original-expr))))
+    ;; in futuro qui controlleremo anche i tipi
     :unknown))
 
 
@@ -246,6 +272,73 @@
           (eq (car expr) 'quote)
           (symbolp (cadr expr)))
      (symbol-name (cadr expr)))
-    ;; altrimenti usiamo la stampa standard
+    ;; altrimenti usiamo la standard
     (t
      (format nil "~S" expr))))
+
+
+;;;; ======================= REPORTING LAYER =======================
+
+(defvar *tc-errors* nil)
+(defvar *tc-call-signatures* (make-hash-table :test #'equal))
+;; Chiave: (name . arity) -> (lista di liste dei tipi degli argomenti visti)
+
+(defun tc-reset-report ()
+  (setf *tc-errors* nil)
+  (clrhash *tc-call-signatures*))
+
+(defun tc-note-error (fmt &rest args)
+  (push (apply #'format nil fmt args) *tc-errors*))
+
+(defun tc-note-call (name arg-types)
+  "Registra la signature di una chiamata NAME(ARGS)."
+  (let* ((arity (length arg-types))
+         (key   (cons name arity))
+         (lst   (gethash key *tc-call-signatures*)))
+    (setf (gethash key *tc-call-signatures*)
+          (adjoin arg-types lst :test #'equal))))
+
+(defun %human-type (ty)
+  "Mapping 'umano' per la stampa; adatta se usi etichette diverse."
+  (case ty
+    (:int 'integer)
+    (:atom 'atom)
+    (:bool 'boolean)
+    (t ty)))
+
+(defun %print-function-def-summaries ()
+  "Stampa le defun note dal tuo *function-table* e, se presenti, i relativi tipi da *function-type-env*."
+  (maphash
+   (lambda (name info)
+     (let* ((req (or (ignore-errors (function-info-required-args info)) '()))
+            (opt (or (ignore-errors (function-info-optional-args info)) '()))
+            (fty (gethash name *function-type-env*))
+            (argt (when fty (append (function-type-arg-types fty)
+                                    (function-type-optional-arg-types fty))))
+            (rett (when fty (function-type-return-type fty))))
+       (format t "function ~A/~D" name (+ (length req) (length opt)))
+       (when argt
+         (format t "  :: (~~{~~A~~^, ~~}) -> ~~A~%"
+                 (mapcar #'%human-type argt)
+                 (%human-type rett)))
+       (unless argt (format t "~%"))))
+   *function-table*))
+
+(defun %print-call-summaries ()
+  "Stampa le signature uniche delle chiamate osservate durante il check."
+  (let ((keys (loop for k being the hash-keys of *tc-call-signatures* collect k)))
+    (dolist (key (sort keys (lambda (a b)
+                              (or (string< (symbol-name (car a)) (symbol-name (car b)))
+                                  (< (cdr a) (cdr b))))))
+      (dolist (sig (gethash key *tc-call-signatures*))
+        (format t "call ~A/~A (~~{~~A~~^, ~~})~%"
+                (car key) (cdr key) (mapcar #'%human-type sig))))))
+
+(defun tc-print-summary ()
+  (format t "~%--- Summary ----------------------------------~%")
+  (%print-function-def-summaries)
+  (%print-call-summaries)
+  (when *tc-errors*
+    (format t "~%--- Errors -----------------------------------~%")
+    (dolist (e (nreverse *tc-errors*))
+      (format t "Error: ~A~%" e))))

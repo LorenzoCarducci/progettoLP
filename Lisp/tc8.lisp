@@ -9,15 +9,16 @@
 ;;;; ============================================================
 ;;;; ERRORI DEL TYPE CHECKER (NO DEBUGGER)
 ;;;; ============================================================
+
+;; Stampa errore personalizzato per il type checker.
 (define-condition tc-error (error)
-    "Stampa errore personalizzato per il type checker."
-    ((msg :initarg :msg :reader tc-error-msg))
-    (:report (lambda (c stream)
-                (format stream "~A" (tc-error-msg c)))))
+  ((msg :initarg :msg :reader tc-error-msg))
+  (:report (lambda (c stream)
+             (format stream "~A" (tc-error-msg c)))))
 
 (defun tc-signal-error (fmt &rest args)
-    "Segnala un errore di type checking."
-    (error 'tc-error :msg (apply #'format nil fmt args)))
+  "Segnala un errore di type checking."
+  (error 'tc-error :msg (apply #'format nil fmt args)))
 
 
 ;;;; ============================================================
