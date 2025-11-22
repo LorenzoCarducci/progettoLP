@@ -2,16 +2,18 @@ README — Type Checker minimale per Prolog
 
 1. INTRODUZIONE
 	Questo progetto implementa un type checker minimale per Prolog, scritto direttamente in Prolog.
-	L’obiettivo è analizzare un file .pl, dedurre i tipi dei predicati definiti e verificare che tutti i goal presenti nel programma siano coerenti a livello di tipi.
-	Il type checker supporta tipi di base, liste, operatori aritmetici e i principali predicati built-in utilizzati nei programmi Prolog introduttivi.
+	L’obiettivo è analizzare un file .pl, dedurre i tipi dei predicati definiti e verificare che tutti i goal presenti nel programma
+	siano coerenti a livello di tipi.
+	Il type checker supporta tipi di base, liste, operatori aritmetici e i principali predicati built-in utilizzati nei programmi Prolog 
+	introduttivi.
 
 
 2. ISTRUZIONI DI UTILIZZO
 	1 - Avviare SWI-Prolog;
 	2 - Spostarti nella cartella in cui si trova il file;
-	3 - Caricare il tc
+	3 - Caricare il tc;
 		?- [tc].
-	4 - Eseguire il tc sul proprio file 
+	4 - Eseguire il tc sul proprio file.
 		?- tc(‘nomefile.pl’).
 
 	Esempio:
@@ -63,14 +65,18 @@ README — Type Checker minimale per Prolog
 	- le variabili vengono mappate su variabili di tipo (t_var (id)).
 	- l’analisi genera vincoli che verranno unificati soltanto alla fine del programma 
 	- le liste vengono rappresentate sempre come t_list(T), dove T è il tipo degli elementi. Tutte le liste usano un’unica forma di tipo.
-	- l’ambiente dei predicati viene costruito analizzando tutte le clausole nel file. Il tc deve sapere: quante argomentazioni ha, quali tipi aspettarsi, dove è definito nel file    (informazione salvata in pred_env).
+	- l’ambiente dei predicati viene costruito analizzando tutte le clausole nel file. Il tc deve sapere: quante argomentazioni ha, quali 
+	  tipi aspettarsi, dove è definito nel file    (informazione salvata in pred_env).
 
 
 6. LIMITAZIONI NOTE
-	- Il type checker è pensato per file che definiscono predicati utente, fatti, regole, aritmetica e liste. Non è pensato per analizzare codice con strutture interne complesse o meta-programmazione.
-	- Se si esegue tc('tc.pl') compaiono molti errori di tipo, in quanto usa strutture molto generiche (vincoli, sostituzioni, liste di liste, meta-termini).Il sistema di tipi minimale non riesce a tipare queste strutture in modo coerente.
-	- Il type checker incontra difficoltà nell'analizzare strutture complesse come liste annidate o variabili dentro altre variabili, rendendo complicato determinare i tipi quando queste strutture sono presenti, come nel caso del proprio codice interno.
+	- Il type checker è pensato per file che definiscono predicati utente, fatti, regole, aritmetica e liste. Non è pensato per analizzare 
+	  codice con strutture interne complesse o meta-programmazione.
+	- Se si esegue tc('tc.pl') compaiono molti errori di tipo, in quanto usa strutture molto generiche (vincoli, sostituzioni, liste di liste, 
+	  meta-termini).Il sistema di tipi minimale non riesce a tipare queste strutture in modo coerente.
+	- Il type checker incontra difficoltà nell'analizzare strutture complesse come liste annidate o variabili dentro altre variabili, rendendo 
+	  complicato determinare i tipi quando queste strutture sono presenti, come nel caso del proprio codice interno.
 
 
 7. REQUISITI
-	- SWI-Prolog
+	- SWI-Prolo

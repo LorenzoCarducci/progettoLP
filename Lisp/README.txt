@@ -13,8 +13,7 @@ README - Type checker minimale per Common Lisp
 
 
 2. ISTRUZIONI DI UTILIZZO
-    Per utilizzare il type checker è sufficiente caricare tc.lisp in un ambiente Common Lisp compatibile e richiamare 
-    la funzione:
+    Per utilizzare il type checker è sufficiente caricare tc.lisp in un ambiente Common Lisp compatibile e richiamare la funzione:
         (tc "nomefile.lisp")
     il cui argomento sarà il percorso di un qualsiasi file di codice .lisp su cui si vuole eseguire il type checker.
 
@@ -26,7 +25,16 @@ README - Type checker minimale per Common Lisp
     Il type checker non si ferma al primo errore: processa l’intero file e mostra tutte le anomalie trovate.
 
     Esempio:
-        
+        CL-USER 1 > (load "tc.lisp")
+        ; Loading text file tc.lisp
+        #P"tc.lisp"
+
+        CL-USER 2 > (tc "fact.lisp")
+        ;;; Type checking 'fact.lisp'.
+
+        (ftype (function (integer &optional integer) integer) fact)
+        Error: ''six' is not of type 'integer' in call (fact 'six)
+        T
 
 
 3. FUNZIONALITA' IMPLEMENTATE
