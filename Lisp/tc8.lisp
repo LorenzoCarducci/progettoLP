@@ -3,7 +3,7 @@
 ;;;; 914396 Coletta Giovanni
 
 ;;;; Type checker minimale per Common Lisp in Common Lisp
-;;;; (Hindley-Milner style per un piccolo sottoinsieme di CL)
+;;;; (Basato sull'algoritmo di Hindley-Milner)
 
 
 ;;;; ============================================================
