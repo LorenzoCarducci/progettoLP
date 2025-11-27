@@ -127,7 +127,8 @@ is_clause(Head, Head, true) :-
 
 build_pred_entries([], []).
 build_pred_entries([Name/Arity | Rest],
-                   [pred(Name,Arity) - t_pred(Name,Arity,ArgTypes) | EnvRest]) :-
+                   [pred(Name,Arity) - t_pred(Name,Arity,ArgTypes) | EnvRest])
+                    :-
     fresh_arg_types(Arity, ArgTypes),
     build_pred_entries(Rest, EnvRest).
 

@@ -1,344 +1,715 @@
 ;;;; 889018 Biglioli Sabrina
 ;;;; 917356 Carducci Lorenzo
 ;;;; 914396 Coletta Giovanni
-;;;; Type checker per Lisp (interi + variabili + liste + built-in)
+
+;;;; Type checker minimale per Common Lisp in Common Lisp
+;;;; (Basato sull'algoritmo di Hindley-Milner)
+
+
+;;;; ============================================================
+;;;; ERRORI DEL TYPE CHECKER (NO DEBUGGER)
+;;;; ============================================================
+
+;; Stampa errore personalizzato per il type checker.
+(define-condition tc-error (error)
+  ((msg :initarg :msg :reader tc-error-msg))
+  (:report (lambda (c stream)
+             (format stream "~A" (tc-error-msg c)))))
+
+(defun tc-signal-error (fmt &rest args)
+  "Segnala un errore di type checking."
+  (error 'tc-error :msg (apply #'format nil fmt args)))
+
+
+;;;; ============================================================
+;;;; RAPPRESENTAZIONE DEI TIPI
+;;;; ============================================================
+;; Definisco come rappresento i vari tipi nel mio type checker.
+;; Tipi interni:
+;;   (:int)                       -> integer
+;;   (:bool)                      -> boolean
+;;   (:string)                    -> string
+;;   (:sym)                       -> symbol
+;;   (:list T)                    -> (list T)
+;;   (:var ID)                    -> variabile di tipo
+;;   (:fun REQ OPT RET)           -> funzione (REQ args obbligatori, OPT args opzionali)
+
+(defun int-type () '(:int))
+(defun bool-type () '(:bool))
+(defun string-type () '(:string))
+(defun sym-type () '(:sym))
+(defun list-type (elem) (list :list elem))
+(defun var-type (id) (list :var id))
+(defun fun-type (req opt ret) (list :fun req opt ret))
+
+(defun type-var-p (ty)
+  (and (consp ty) (eq (first ty) :var)))
+
+(defun list-type-p (ty)
+  (and (consp ty) (eq (first ty) :list)))
+
+(defun fun-type-p (ty)
+  (and (consp ty) (eq (first ty) :fun)))
+
+
+;;;; ============================================================
+;;;; SCHEMI DI TIPO E AMBIENTE
+;;;; ============================================================
+;; Definisco come rappresento gli schemi di tipo e l’ambiente
+;; che associa i nomi delle funzioni/variabili ai loro tipi.
+;; Uno schema rappresenta un tipo con variabili quantificate:
+;; (:scheme VARS TYPE) dove VARS è una lista di ID di variabili di tipo quantificate.
+
+(defun make-scheme (vars type)
+  (list :scheme vars type))
+
+(defun scheme-vars (sch) (second sch))
+(defun scheme-type (sch) (third sch))
+
+(defun env-empty () nil)
+
+(defun env-extend (env name scheme)
+  (acons name scheme env))
+
+(defun env-lookup (env name)
+  (let ((cell (assoc name env)))
+    (when cell (cdr cell))))
+
+
+;;;; ============================================================
+;;;; SOSTITUZIONI (per le variabili di tipo)
+;;;; ============================================================
+;; Gestisco le sostituzioni per le variabili di tipo e l’unificazione
+;; dei tipi usando una sostituzione globale.
+
+(defparameter *subst* nil)          
+(defparameter *next-type-var-id* 0)
+
+(defun fresh-type-var ()
+  "Crea una nuova variabile di tipo."
+  (incf *next-type-var-id*)
+  (var-type *next-type-var-id*))
+
+(defun lookup-subst (id)
+  (assoc id *subst*))
+
+(defun occurs-in-type-p (id type)
+  "Occurs check: verifica se la var di tipo ID compare in TYPE."
+  (cond
+    ((type-var-p type)
+     (let* ((tid (second type))
+            (binding (lookup-subst tid)))
+       (if binding
+           (occurs-in-type-p id (cdr binding))
+           (= id tid))))
+    ((list-type-p type)
+     (occurs-in-type-p id (second type)))
+    ((fun-type-p type)
+     (or (some (lambda (ty) (occurs-in-type-p id ty)) (second type))
+         (some (lambda (ty) (occurs-in-type-p id ty)) (third type))
+         (occurs-in-type-p id (fourth type))))
+    (t nil)))
+
+(defun apply-subst (type)
+  "Applica la sostituzione globale *SUBST* a TYPE."
+  (cond
+    ((type-var-p type)
+     (let* ((id (second type))
+            (binding (lookup-subst id)))
+       (if binding
+           (apply-subst (cdr binding))
+           type)))
+    ((list-type-p type)
+     (list-type (apply-subst (second type))))
+    ((fun-type-p type)
+     (fun-type (mapcar #'apply-subst (second type))
+               (mapcar #'apply-subst (third type))
+               (apply-subst (fourth type))))
+    (t type)))
+
+(defun unify-var (id type)
+  "Unifica la var di tipo ID con TYPE."
+  (let ((binding (lookup-subst id)))
+    (cond
+      (binding
+       (unify (cdr binding) type))
+      ((and (type-var-p type)
+            (= id (second type)))
+       type)
+      ((occurs-in-type-p id type)
+       (tc-signal-error "Occurs check failed: ~A in ~A" (var-type id) type))
+      (t
+       (push (cons id type) *subst*)
+       type))))
+
+(defun unify (t1 t2)
+  "Unificazione dei tipi (modifica *SUBST*)."
+  (setf t1 (apply-subst t1)
+        t2 (apply-subst t2))
+  (cond
+    ((and (type-var-p t1) (type-var-p t2)
+          (= (second t1) (second t2)))
+     t1)
+    ((type-var-p t1)
+     (unify-var (second t1) t2))
+    ((type-var-p t2)
+     (unify-var (second t2) t1))
+    ((and (list-type-p t1) (list-type-p t2))
+     (unify (second t1) (second t2)))
+    ((and (fun-type-p t1) (fun-type-p t2))
+     (let* ((req1 (second t1))
+            (opt1 (third t1))
+            (ret1 (fourth t1))
+            (req2 (second t2))
+            (opt2 (third t2))
+            (ret2 (fourth t2)))
+       (unless (and (= (length req1) (length req2))
+                    (= (length opt1) (length opt2)))
+         (tc-signal-error "Cannot unify function types (different arity): ~A vs
+          ~A" t1 t2))
+       (mapc #'unify req1 req2)
+       (mapc #'unify opt1 opt2)
+       (unify ret1 ret2)))
+    ((equal t1 t2)
+     t1)
+    (t
+     (tc-signal-error "Type mismatch: ~A vs ~A" t1 t2))))
+
+
+;;;; ============================================================
+;;;; INSIEMI DI VARIABILI DI TIPO
+;;;; ============================================================
+;; Calcolo le variabili di tipo libere in tipi, schemi e ambiente,
+;; e gestisco generalizzazione e istanziazione degli schemi.
+
+(defun ftv-type (type)
+  "Restituisce le variabili di tipo libere presenti in TYPE
+  (come lista di ID)."
+  (cond
+    ((type-var-p type)
+     (list (second type)))
+    ((list-type-p type)
+     (ftv-type (second type)))
+    ((fun-type-p type)
+     (union (mapcan #'ftv-type (second type))
+            (union (mapcan #'ftv-type (third type))
+                   (ftv-type (fourth type)))))
+    (t nil)))
+
+(defun ftv-scheme (scheme)
+  "Restituisce le variabili di tipo libere di uno schema."
+  (let* ((vars (scheme-vars scheme))
+         (tvars (ftv-type (scheme-type scheme))))
+    (set-difference tvars vars)))
+
+(defun ftv-env (env)
+  "Restituisce le variabili di tipo libere presenti nell'ambiente ENV."
+  (remove-duplicates
+   (mapcan (lambda (entry)
+             (ftv-scheme (cdr entry)))
+           env)))
+
+(defun generalize (env type)
+  "Generalizza TYPE rispetto all'ENV."
+  (let* ((tvars (ftv-type type))
+         (env-vars (ftv-env env))
+         (vars (set-difference tvars env-vars)))
+    (make-scheme vars type)))
+
+(defun tsubst-with (type subst)
+  "Applica una sostituzione locale SUBST a TYPE."
+  (cond
+    ((type-var-p type)
+     (let* ((id (second type))
+            (binding (assoc id subst)))
+       (if binding
+           (tsubst-with (cdr binding) subst)
+           type)))
+    ((list-type-p type)
+     (list-type (tsubst-with (second type) subst)))
+    ((fun-type-p type)
+     (fun-type (mapcar (lambda (ty) (tsubst-with ty subst)) (second type))
+               (mapcar (lambda (ty) (tsubst-with ty subst)) (third type))
+               (tsubst-with (fourth type) subst)))
+    (t type)))
+
+(defun instantiate (scheme)
+  "Istanzia uno schema con nuove variabili di tipo."
+  (let* ((vars (scheme-vars scheme))
+         (subst (mapcar (lambda (v) (cons v (fresh-type-var))) vars)))
+    (tsubst-with (scheme-type scheme) subst)))
+
+
+;;;; ============================================================
+;;;; PRETTY PRINT DEI TIPI (stile Common Lisp)
+;;;; ============================================================
+;; Converto i tipi interni in una forma leggibile in stile Common Lisp
+;; e formatto sia i tipi sia le espressioni per la stampa dei messaggi.
+
+(defun type->cl-type (type)
+  "Converte il tipo interno in una 'CL type specifier' simbolica."
+  (setf type (apply-subst type))
+  (cond
+    ((equal type (int-type)) 'integer)
+    ((equal type (bool-type)) 'boolean)
+    ((equal type (string-type)) 'string)
+    ((equal type (sym-type)) 'symbol)
+    ((list-type-p type)
+     `(list ,(type->cl-type (second type))))
+    ((fun-type-p type)
+     (let* ((req (mapcar #'type->cl-type (second type)))
+            (opt (mapcar #'type->cl-type (third type)))
+            (ret (type->cl-type (fourth type)))
+            (arg-list (if opt
+                          (append req (list '&optional) opt)
+                          req)))
+       `(function ,arg-list ,ret)))
+    ((type-var-p type)
+     ;; per debugging: Tn
+     (intern (format nil "T~A" (second type))))
+    (t
+     type)))
+
+(defun expr->string (expr)
+  "Restituisce una rappresentazione leggibile dell'espressione,
+   usando l'abbreviazione 'x per (quote x) e simboli in minuscolo."
+  (labels ((pp (e)
+             (cond
+               ;; 'x
+               ((and (consp e)
+                     (eq (first e) 'quote)
+                     (symbolp (second e)))
+                (format nil "'~(~A~)" (second e)))
+               ;; liste generiche: (f a b ...)
+               ((consp e)
+                (format nil "(~{~A~^ ~})"
+                        (mapcar #'pp e)))
+               ;; simboli: minuscoli
+               ((symbolp e)
+                (format nil "~(~A~)" e))
+               ;; numeri, stringhe, ecc.
+               (t
+                (prin1-to-string e)))))
+    (pp expr)))
+
+(defun type->name-string (type)
+  "Restituisce il nome del tipo in stile Common Lisp."
+  (let* ((*print-case* :downcase)
+         (cl-ty (type->cl-type (apply-subst type))))
+    (format nil "~A" cl-ty)))
+
+(defun print-function-type (name fun-ty)
+  "Stampa (ftype (function ...) name)"
+  (let ((cl-ty (type->cl-type fun-ty)))
+    (destructuring-bind (fn-keyword arglist ret) cl-ty
+      (declare (ignore fn-keyword))
+      (format t "~&(ftype (function ~S ~S) ~S)~%"
+              arglist ret name))))
+
+
+;;;; ============================================================
+;;;; AMBIENTE DI BASE (PRIMITIVE)
+;;;; ============================================================
+;; Costruisco l’ambiente iniziale, cioè i tipi delle primitive
+;; aritmetiche e logiche di Lisp che il type checker deve conoscere.
+
+(defun initial-env ()
+  "Ambiente iniziale con alcune primitive."
+  (let ((env (env-empty)))
+    ;; integer literals, ecc. sono gestiti direttamente
+    ;; zerop : integer -> boolean
+    (setf env (env-extend env 'zerop
+                          (make-scheme nil
+                                       (fun-type (list (int-type)) 
+                                                 nil 
+                                                 (bool-type)))))
+    ;; 1-   : integer -> integer
+    (setf env (env-extend env '1-
+                          (make-scheme nil
+                                       (fun-type (list (int-type)) 
+                                                 nil 
+                                                 (int-type)))))
+    ;; + : integer integer -> integer
+    (setf env (env-extend env '+
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (int-type)))))
+    ;; - : integer integer -> integer
+    (setf env (env-extend env '-
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (int-type)))))
+    ;; * : integer integer -> integer
+    (setf env (env-extend env '*
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (int-type)))))
+    ;; / : integer integer -> integer
+    (setf env (env-extend env '/
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (int-type)))))
+    ;; = : integer integer -> boolean
+    (setf env (env-extend env '=
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (bool-type)))))
+    ;; /= : integer integer -> boolean
+    (setf env (env-extend env '/=
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (bool-type)))))
+    ;; < : integer integer -> boolean
+    (setf env (env-extend env '<
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (bool-type)))))
+    ;; <= : integer integer -> boolean
+    (setf env (env-extend env '<=
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (bool-type)))))
+    ;; > : integer integer -> boolean
+    (setf env (env-extend env '>
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (bool-type)))))
+    ;; >= : integer integer -> boolean
+    (setf env (env-extend env '>=
+                          (make-scheme nil
+                                       (fun-type (list (int-type) (int-type))
+                                                 nil
+                                                 (bool-type)))))
+    ;; format: non facciamo type checking sugli argomenti
+    (let* ((tvar (fresh-type-var))
+           (fmt-ty (fun-type (list (string-type))
+                             nil
+                             tvar)))
+      (setf env (env-extend env 'format
+                            (make-scheme (ftv-type fmt-ty) fmt-ty))))
+    env))
+
+
+;;;; ============================================================
+;;;; INFERENZA DEI TIPI PER ESPRESSIONI
+;;;; ============================================================
+;; Implemento la parte del type checker che prova a
+;; indovinare il tipo delle espressioni Lisp a partire dalla loro forma:
+;; numeri, stringhe, simboli, quote, if e chiamate di funzione (con
+;; alcuni casi speciali per macro, handler-case, format e funzioni del
+;; Lisp host).
+
+(defun infer-symbol (sym env)
+  (cond
+    ;; booleani
+    ((or (eq sym 't) (eq sym 'nil))
+     (bool-type))
+
+    ;; keyword: le trattiamo come simboli costanti
+    ((keywordp sym)
+     (sym-type))
+
+    ;; variabili globali del tipo *foo*: le consideriamo ben tipate,
+    ;; ma senza controllarne davvero il tipo
+    ((let* ((name (symbol-name sym))
+            (len  (length name)))
+       (and (> len 1)
+            (char= (char name 0) #\*)
+            (char= (char name (1- len)) #\*)))
+     (fresh-type-var))
+
+    (t
+     (let ((scheme (env-lookup env sym)))
+       (unless scheme
+         (tc-signal-error "Unbound symbol ~S" sym))
+       (instantiate scheme)))))
+
+
+(defun infer-quote (form env)
+  (declare (ignore env))
+  ;; '(...) -> lista, 'simbolo -> symbol
+  (let ((obj (second form)))
+    (cond
+      ((symbolp obj) (sym-type))
+      ((numberp obj) (int-type))
+      ((stringp obj) (string-type))
+      ((consp obj)   (list-type (fresh-type-var)))
+      (t (fresh-type-var)))))
+
+(defun infer-if (form env)
+  ;; form = (if test then [else])
+  (let ((test (second form))
+        (then (third form))
+        (else (fourth form)))
+    (unless (and test then)
+      (tc-signal-error "Malformed IF: ~A" (expr->string form)))
+    (let ((t-ty (infer-expr test env)))
+      (unify t-ty (bool-type)))
+    (let ((then-ty (infer-expr then env))
+          (else-ty (if else
+                       (infer-expr else env)
+                       (bool-type))))
+      (unify then-ty else-ty)
+      then-ty)))
+
+
+(defun fun-type-required (fun-ty) (second fun-ty))
+(defun fun-type-optional (fun-ty) (third fun-ty))
+(defun fun-type-ret (fun-ty) (fourth fun-ty))
+
+(defun infer-call (form env)
+  "Inferenza per una chiamata di funzione (f arg1 arg2 ...)."
+  (block infer-call
+    (let* ((fn   (first form))
+           (args (rest form)))
+
+      ;; -------------------------------------------------------
+      ;; Se l'operatore non è un simbolo → NON è una chiamata
+      ;; di funzione, ma una struttura-dato.
+      ;; Type-checking solo per i sottoform che sono liste.
+      ;; -------------------------------------------------------
+
+      ;; 1) operatore non simbolo → struttura dati, non funzione
+      (unless (symbolp fn)
+        (dolist (sf args)
+          (when (consp sf)
+            (infer-expr sf env)))
+        (return-from infer-call (fresh-type-var)))
+
+      ;; 2) operatore keyword → opzione tipo :report
+      (when (keywordp fn)
+        (dolist (sf args)
+          (when (and (consp sf) (eq (first sf) 'lambda))
+            (infer-expr sf env)))
+        (return-from infer-call (fresh-type-var)))
+
+      ;; 3) CASO SPECIALE: DEFINE-CONDITION
+      ;; trattiamo solo le lambda dentro alle opzioni, il resto è dato
+      (when (eq fn 'define-condition)
+        (dolist (sf args)
+          (when (and (consp sf) (eq (first sf) 'lambda))
+            (infer-expr sf env)))
+        (return-from infer-call (fresh-type-var)))
+
+      ;; -------------------------------------------------------
+      ;; CASO SPECIALE: HANDLER-CASE
+      ;; -------------------------------------------------------
+      (when (eq fn 'handler-case)
+        (let ((protected (first args))
+              (clauses   (rest args)))
+          ;; espressione protetta
+          (infer-expr protected env)
+          ;; per ogni clausola, ignoriamo nome condition e binding,
+          ;; e verifichiamo solo i body
+          (dolist (clause clauses)
+            (when (consp clause)
+              (destructuring-bind (cond-type bindings &rest body) clause
+                (declare (ignore cond-type bindings))
+                (infer-progn body env))))
+          (return-from infer-call (fresh-type-var))))
+
+      ;; -------------------------------------------------------
+      ;; CASO GENERICO: macro o special form del Lisp host
+      ;; Esempi: define-condition, when, unless, and, or, ...
+      ;; Analizziamo SOLO i sottoform che sono liste.
+      ;; -------------------------------------------------------
+      (when (or (special-operator-p fn)
+                (macro-function fn))
+        (dolist (sf args)
+          (when (consp sf)
+            (infer-expr sf env)))
+        (return-from infer-call (fresh-type-var)))
+
+      ;; -------------------------------------------------------
+      ;; CASO SPECIALE: FORMAT
+      ;; Non controlliamo arità/tipo di FORMAT, ma analizziamo
+      ;; comunque tutti gli argomenti.
+      ;; -------------------------------------------------------
+      (when (eq fn 'format)
+        (dolist (a args)
+          (infer-expr a env))
+        (return-from infer-call (fresh-type-var)))
+
+      ;; -------------------------------------------------------
+      ;; CASO GENERALE: vera funzione (nostra o del CL host)
+      ;; -------------------------------------------------------
+      (let ((scheme (env-lookup env fn)))
+        ;; Se non è nel nostro env ma è una funzione definita nel CL host
+        ;; la trattiamo come "esterna":
+        ;; checkiamo solo gli argomenti, ignorando tipo/aritá della funzione.
+        (unless scheme
+          (when (fboundp fn)
+            (dolist (a args)
+              (infer-expr a env))
+            (return-from infer-call (fresh-type-var)))
+          (tc-signal-error "Unknown function ~S" fn))
+
+        ;; Qui FN è una nostra funzione con tipo noto
+        (let* ((fun-ty    (instantiate scheme))
+               (req       (fun-type-required fun-ty))
+               (opt       (fun-type-optional fun-ty))
+               (ret       (fun-type-ret fun-ty))
+               (min-arity (length req))
+               (max-arity (+ min-arity (length opt)))
+               (n-args    (length args)))
+          (when (or (< n-args min-arity) (> n-args max-arity))
+            (tc-signal-error
+             "Arity mismatch in call ~A: expected ~D-~D args, got ~D"
+             (expr->string form) min-arity max-arity n-args))
+          ;; unifichiamo argomenti; in caso di errore, stampiamo il messaggio formattato
+          (let ((param-types (append req opt)))
+            (loop for arg in args
+                  for pty in param-types
+                  do
+                    (let ((aty (infer-expr arg env)))
+                      (handler-case
+                          (unify pty aty)
+                        (tc-error (c)
+                          (declare (ignore c))
+                          (let* ((expected-str (type->name-string pty))
+                                 (arg-str      (expr->string arg))
+                                 (call-str     (expr->string form)))
+                            (tc-signal-error
+                             "'~A' is not of type '~A' in call ~A"
+                             arg-str expected-str call-str)))))))
+          (apply-subst ret))))))
+
+
+(defun infer-expr (expr env)
+  "Inferenza del tipo di una generica espressione."
+  (cond
+    ((numberp expr) (int-type))
+    ((stringp expr) (string-type))
+    ((symbolp expr) (infer-symbol expr env))
+    ((consp expr)
+     (case (first expr)
+       (quote  (infer-quote expr env))
+       (if     (infer-if expr env))
+       (t      (infer-call expr env))))
+    (t
+     (fresh-type-var))))
+
+(defun infer-progn (forms env)
+  "Valuta ogni espressione e restituisce il tipo dell'ultima della lista."
+  (let ((result-type (bool-type)))
+    (dolist (f forms)
+      (setf result-type (infer-expr f env)))
+    result-type))
+
+
+;;;; ============================================================
+;;;; INFERENZA PER DEFUN (top-level)
+;;;; ============================================================
+;; Gestisco le DEFUN di top-level: analizzo la lista di parametri,
+;; assegno variabili di tipo agli argomenti e al valore di ritorno,
+;; inferisco il tipo del corpo (supportando la ricorsione) e
+;; aggiorno l'ambiente con il tipo della funzione.
+
+(defun parse-parameter-list (params)
+  "Restituisce (req-names opt-specs)
+   req-names : lista di simboli obbligatori
+   opt-specs : lista di (name default-expr | name)"
+  (let ((req '())
+        (opt '())
+        (mode :req))
+    (dolist (p params)
+      (cond
+        ((eq p '&optional) (setf mode :opt))
+        ((eq mode :req)
+         (push p req))
+        (t
+         (push p opt))))
+    (values (nreverse req) (nreverse opt))))
+
+(defun infer-defun (form env)
+  "Inferisce il tipo di una funzione definita con DEFUN e
+   restituisce (values new-env function-type)."
+  (destructuring-bind (_ name params &rest body) form
+    (declare (ignore _))
+    (multiple-value-bind (req-names opt-specs) (parse-parameter-list params)
+      ;; creiamo le variabili di tipo per parametri e ritorno
+      (let* ((req-types (mapcar (lambda (_x) (fresh-type-var)) req-names))
+             (opt-types (mapcar (lambda (_x) (fresh-type-var)) opt-specs))
+             (ret-type (fresh-type-var))
+             (fun-ty   (fun-type req-types opt-types ret-type)))
+        ;; ambiente con la funzione stessa (ricorsione)
+        (let* ((fun-scheme (make-scheme nil fun-ty))
+               (env-with-fun (env-extend env name fun-scheme))
+               ;; ambiente con parametri
+               (env-with-params
+                 (let ((e env-with-fun))
+                   ;; parametri obbligatori
+                   (loop for pname in req-names
+                         for pty   in req-types
+                         do (setf e (env-extend e pname (make-scheme nil pty))))
+                   ;; parametri opzionali
+                   (loop for p in opt-specs
+                         for pty in opt-types
+                         do (let ((pname (if (consp p) (first p) p)))
+                              (setf e (env-extend e pname 
+                              (make-scheme nil pty)))))
+                   e)))
+          ;; Unifichiamo i tipi dei default delle opzionali, se presenti
+          (loop for p in opt-specs
+                for pty in opt-types
+                do (when (consp p)
+                     (let ((default-expr (second p)))
+                       (unify pty (infer-expr default-expr env-with-params)))))
+          ;; Tipo del corpo
+          (let ((body-type (infer-progn body env-with-params)))
+            (unify ret-type body-type)
+            (let* ((generalized-fun-type (apply-subst fun-ty))
+                   (scheme (generalize env generalized-fun-type))
+                   (new-env (env-extend env name scheme)))
+              (values new-env generalized-fun-type))))))))
+
+
+;;;; ============================================================
+;;;; FUNZIONE PRINCIPALE: (tc "file.lisp")
+;;;; ============================================================
+;; Funzione principale del type checker: legge il file e controlla i tipi di ogni forma top-level.
+;; Stampa i tipi delle funzioni o gli eventuali errori.
+
+(defun process-top-form (form env)
+  "Processa una forma top-level. Restituisce il nuovo env."
+  (cond
+    ;; defun: inferiamo il tipo e lo stampiamo
+    ((and (consp form) (eq (first form) 'defun))
+     (multiple-value-bind (new-env fun-ty) (infer-defun form env)
+       (print-function-type (second form) fun-ty)
+       new-env))
+    ;; altre forme: errori
+    (t
+     (infer-expr form env)
+     env)))
 
 (defun tc (filename)
-  "Entry point del type checker con reporting."
-  (tc-reset-report)
+  "Funzione principale del Type checker."
   (format t ";;; Type checking '~A'.~%~%" filename)
-  (let ((forms (read-all-forms-from-file filename)))
-    (dolist (form forms)
-      (process-top-level-form form)))
-  (tc-print-summary)
-  (if (null *tc-errors*) t nil))
-
-
-
-(defun read-all-forms-from-file (filename)
-  "Legge tutte le forme Lisp da FILENAME e le restituisce come lista."
-  (with-open-file (in filename :direction :input)
-    (loop for form = (read in nil :eof)
-          until (eq form :eof)
-          collect form)))
-
-
-(defparameter *function-table*
-  (make-hash-table :test #'eq)
-  "Tabella che associa il nome della funzione a una struttura con info sul numero di argomenti, ecc.")
-
-
-(defstruct function-info
-  name          ; simbolo della funzione
-  required-args ; lista dei parametri obbligatori
-  optional-args ; lista dei parametri opzionali
-  min-arity     ; numero minimo di argomenti
-  max-arity     ; numero massimo di argomenti
-  ;; in futuro: rest-arg, keyword-args, tipo di ritorno, tipo degli argomenti, ecc.
-  )
-
-
-(defstruct function-type
-  arg-types           ; lista tipi degli argomenti obbligatori
-  optional-arg-types  ; lista tipi degli argomenti opzionali
-  return-type)        ; tipo di ritorno
-
-
-(defparameter *function-type-env*
-  (let ((ht (make-hash-table :test #'eq)))
-    ;; Built-in aritmetici su interi
-    (setf (gethash '+ ht)
-          (make-function-type
-           :arg-types '(:int :int)
-           :optional-arg-types '()
-           :return-type :int))
-    (setf (gethash '* ht)
-          (make-function-type
-           :arg-types '(:int :int)
-           :optional-arg-types '()
-           :return-type :int))
-    (setf (gethash '- ht)
-          (make-function-type
-           :arg-types '(:int)
-           :optional-arg-types '(:int)  ; (- x) o (- x y)
-           :return-type :int))
-    (setf (gethash '1- ht)
-          (make-function-type
-           :arg-types '(:int)
-           :optional-arg-types '()
-           :return-type :int))
-    (setf (gethash 'zerop ht)
-          (make-function-type
-           :arg-types '(:int)
-           :optional-arg-types '()
-           :return-type :bool))
-    ht)
-  "Tabella dei tipi delle funzioni built-in e delle defun utente note.")
-
-
-(defun process-top-level-form (form)
-  "Analizza una forma top-level.
-   - DEFUN: registra la funzione.
-   - Altro: prova a fare un controllo sulla chiamata."
-  (cond
-    ((and (consp form)
-          (eq (car form) 'defun))
-     (process-defun-form form))
-    (t
-     ;; qui facciamo il controllo sulle espressioni top-level
-     (type-check-expression form))))
-
-
-(defun type-check-top-level-expression (form)
-  "Controlla una espressione top-level.
-   Per ora: controlla solo l'arità delle funzioni definite dall'utente."
-  (format t "Checking top-level expression: ~S~%" form)
-  (type-check-expression form nil))
-
-
-(defun type-check-expression (expr)
-  "Controllo minimalista delle espressioni.
-   Usa *function-type-env* per controllare le chiamate a funzioni note
-   e *function-table* per controllare almeno l'arità delle funzioni
-   definite dall'utente."
-  (cond
-    ;; numeri, simboli, stringhe, NIL da soli: niente da controllare
-    ((or (integerp expr)
-         (symbolp expr)
-         (stringp expr)
-         (null expr))
-     nil)
-
-    ;; quote, tipo 'six o '3
-    ((and (consp expr)
-          (eq (car expr) 'quote))
-     nil)
-
-    ;; chiamata di funzione o forma speciale
-    ((consp expr)
-     (let ((fn   (car expr))
-           (args (cdr expr)))
-       ;; prima controlliamo ricorsivamente tutti gli argomenti
-       (dolist (a args)
-         (type-check-expression a))
-       ;; poi, se conosciamo qualcosa sulla funzione, facciamo i controlli
-       (let* ((ftype     (gethash fn *function-type-env*))
-              (user-info (gethash fn *function-table*)))
-         (cond
-           ;; se abbiamo info di tipo, usiamo il controllo di tipo completo
-           (ftype
-            (check-function-call fn ftype args expr))
-           ;; altrimenti, se è una funzione definita dall'utente, controlliamo almeno l'arità
-           (user-info
-            (check-user-function-call fn args expr nil))
-           ;; altrimenti non sappiamo nulla: nessun controllo extra
-           (t
-            nil)))))
-    (t
-     nil)))
-
-
-(defun check-function-call (fn-symbol args)
-  "Controlla una chiamata a funzione/built-in secondo *function-type-env*.
-   Colleziona le signature viste e accumula gli errori invece di stamparli subito."
-  (let* ((fty (gethash fn-symbol *function-type-env*))
-         (req (and fty (function-type-arg-types fty)))
-         (opt (and fty (function-type-optional-arg-types fty))))
-    (unless fty
-      ;; Se non abbiamo tipi noti per FN, non imponiamo vincoli tipali
-      ;; ma registriamo comunque la call con i tipi inferiti.
-      (let ((actuals (mapcar #'infer-type args)))
-        (tc-note-call fn-symbol actuals))
-      (return-from check-function-call t))
-
-    ;; Arity check 'soft': se troppi/pochi argomenti, errore.
-    (let* ((min (length req))
-           (max (+ (length req) (length opt)))
-           (arity (length args)))
-      (when (or (< arity min) (> arity max))
-        (tc-note-error "Wrong arity for ~A: got ~D, expected ~D..~D"
-                       fn-symbol arity min max)
-        (return-from check-function-call nil)))
-
-    ;; Abbiniamo i tipi attesi ai reali
-    (let* ((expected (append req (subseq opt 0 (max 0 (- (length args) (length req))))))
-           (actuals  (mapcar #'infer-type args))
-           (ok t))
-      ;; registra la chiamata per il riepilogo
-      (tc-note-call fn-symbol actuals)
-
-      ;; verifica puntuale tipo per tipo (se :unknown non segnala)
-      (loop for a in actuals
-            for e in expected
-            for orig in args
-            do (when (and (not (eq a :unknown)) (not (eql a e)))
-                 (setf ok nil)
-                 (tc-note-error "'~A' is not of type '~(~A~)' in call ~S"
-                                (display-arg orig) e (cons fn-symbol args))))
-      ok)))
-
-
-
-(defun process-defun-form (form)
-  "Analizza una forma (defun ...) e la registra nella *function-table*."
-  ;; Forma attesa: (defun name (params...) body...)
-  (destructuring-bind (_defun name params-list &rest _body)
-      form
-    (let* ((required-params '())
-           (optional-params '()))
-      ;; Parametri possono essere: (x y &optional (acc 1))
-      (loop for rest-params on params-list
-            for param = (car rest-params)
-            do (cond
-                 ((eq param '&optional)
-                  (setf optional-params (cdr rest-params))
-                  (return))
-                 (t
-                  (push param required-params))))
-      (setf required-params (nreverse required-params))
-      ;; Creiamo la struttura function-info (info "strutturale": solo nomi parametri)
-      (let ((info (make-function-info
-                   :name          name
-                   :required-args required-params
-                   :optional-args optional-params)))
-        (setf (gethash name *function-table*) info)
-
-        ;; --- Qui agganciamo anche le informazioni di TIPO ---
-
-        ;; Caso specifico di FACT come da traccia:
-        ;; (function (integer &optional integer) integer)
-        (when (eq name 'fact)
-          ;; registra il tipo nella tabella dei tipi di funzione
-          (setf (gethash name *function-type-env*)
-                (make-function-type
-                 :arg-types '(:int)       ; n
-                 :optional-arg-types '(:int) ; acc
-                 :return-type :int))
-          ;; stampa la riga ftype come nell'esempio della traccia
-          (format t "(ftype (function (integer &optional integer) integer) ~A)~%"
-                  name))
-
-        info))))
-
-
-(defun infer-type (expr)
-  "Inferenza molto grezza: riconosce interi e simboli quotati."
-  (cond
-    ;; intero nudo: 42
-    ((integerp expr)
-     :int)
-
-    ;; '3  → (quote 3)
-    ((and (consp expr)
-          (eq (car expr) 'quote))
-     (let ((v (cadr expr)))
-       (cond
-         ((integerp v) :int)
-         ((symbolp v)  :symbol)
-         (t            :unknown))))
-
-    ;; tutto il resto: per ora tipo sconosciuto
-    (t
-     :unknown)))
-
-
-(defun check-user-function-call (fn args original-expr env)
-  "Controlla il numero di argomenti di una chiamata a funzione definita dall'utente."
-  (declare (ignore env)) ; lo useremo quando controlleremo davvero i tipi
-  (let* ((info (gethash fn *function-table*)))
-    (when info
-      (let* ((nargs (length args))
-             (min   (function-info-min-arity info))
-             (max   (function-info-max-arity info)))
-        ;; troppo pochi argomenti
-        (when (< nargs min)
-          (format t "Error: funzione ~A chiamata con ~D argomenti, \
-ma ne richiede almeno ~D.~%  Espressione: ~S~%"
-                  fn nargs min original-expr))
-        ;; troppi argomenti
-        (when (> nargs max)
-          (format t "Error: funzione ~A chiamata con ~D argomenti, \
-ma ne accetta al massimo ~D.~%  Espressione: ~S~%"
-                  fn nargs max original-expr))))
-    ;; in futuro qui controlleremo anche i tipi
-    :unknown))
-
-
-(defun display-arg (expr)
-  "Restituisce una stringa 'bella' per l'argomento nell'errore."
-  (cond
-    ;; 'six → "six"
-    ((and (consp expr)
-          (eq (car expr) 'quote)
-          (symbolp (cadr expr)))
-     (symbol-name (cadr expr)))
-    ;; altrimenti usiamo la standard
-    (t
-     (format nil "~S" expr))))
-
-
-;;;; ======================= REPORTING LAYER =======================
-
-(defvar *tc-errors* nil)
-(defvar *tc-call-signatures* (make-hash-table :test #'equal))
-;; Chiave: (name . arity) -> (lista di liste dei tipi degli argomenti visti)
-
-(defun tc-reset-report ()
-  (setf *tc-errors* nil)
-  (clrhash *tc-call-signatures*))
-
-(defun tc-note-error (fmt &rest args)
-  (push (apply #'format nil fmt args) *tc-errors*))
-
-(defun tc-note-call (name arg-types)
-  "Registra la signature di una chiamata NAME(ARGS)."
-  (let* ((arity (length arg-types))
-         (key   (cons name arity))
-         (lst   (gethash key *tc-call-signatures*)))
-    (setf (gethash key *tc-call-signatures*)
-          (adjoin arg-types lst :test #'equal))))
-
-(defun %human-type (ty)
-  "Mapping 'umano' per la stampa; adatta se usi etichette diverse."
-  (case ty
-    (:int 'integer)
-    (:atom 'atom)
-    (:bool 'boolean)
-    (t ty)))
-
-(defun %print-function-def-summaries ()
-  "Stampa le defun note dal tuo *function-table* e, se presenti, i relativi tipi da *function-type-env*."
-  (maphash
-   (lambda (name info)
-     (let* ((req (or (ignore-errors (function-info-required-args info)) '()))
-            (opt (or (ignore-errors (function-info-optional-args info)) '()))
-            (fty (gethash name *function-type-env*))
-            (argt (when fty (append (function-type-arg-types fty)
-                                    (function-type-optional-arg-types fty))))
-            (rett (when fty (function-type-return-type fty))))
-       (format t "function ~A/~D" name (+ (length req) (length opt)))
-       (when argt
-         (format t "  :: (~~{~~A~~^, ~~}) -> ~~A~%"
-                 (mapcar #'%human-type argt)
-                 (%human-type rett)))
-       (unless argt (format t "~%"))))
-   *function-table*))
-
-(defun %print-call-summaries ()
-  "Stampa le signature uniche delle chiamate osservate durante il check."
-  (let ((keys (loop for k being the hash-keys of *tc-call-signatures* collect k)))
-    (dolist (key (sort keys (lambda (a b)
-                              (or (string< (symbol-name (car a)) (symbol-name (car b)))
-                                  (< (cdr a) (cdr b))))))
-      (dolist (sig (gethash key *tc-call-signatures*))
-        (format t "call ~A/~A (~~{~~A~~^, ~~})~%"
-                (car key) (cdr key) (mapcar #'%human-type sig))))))
-
-(defun tc-print-summary ()
-  (format t "~%--- Summary ----------------------------------~%")
-  (%print-function-def-summaries)
-  (%print-call-summaries)
-  (when *tc-errors*
-    (format t "~%--- Errors -----------------------------------~%")
-    (dolist (e (nreverse *tc-errors*))
-      (format t "Error: ~A~%" e))))
+  (let ((*subst* nil)
+        (*next-type-var-id* 0)
+        (*print-case* :downcase)
+        (*print-pretty* t))
+    (let ((env (initial-env)))
+      (with-open-file (in filename :direction :input)
+  
+        (loop for form = (read in nil :eof)
+              until (eq form :eof)
+              do
+                (handler-case
+                    (setf env (process-top-form form env))
+                  (tc-error (c)
+                    (format t "Error: ~A~%" (tc-error-msg c)))
+                  (error (c)
+                    ;; errori imprevisti: li segnaliamo ma continuiamo
+                    (format t "Internal error: ~A~%" c))))))
+    t))
