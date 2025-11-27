@@ -21,7 +21,7 @@ tc_debug_off :-
     asserta(tc_debug(off)).
 
 /* ============================ ENTRY POINT ============================ */
-/* Punto di ingresso del type checker: legge il file, genera e risolve i vincoli. */
+%% Punto di ingresso del type checker: legge il file, genera e risolve i vincoli.
 
 tc_core(File) :-
     retractall(next_type_var_id(_)),
@@ -62,7 +62,7 @@ read_terms(Stream, [T|Ts]) :-
     ).
 
 /* ====================== RIORDINO CLAUSOLE ============================ */
-/* Porta alla fine le direttive (:- ...) lasciando prima le clausole normali. */
+%%Porta alla fine le direttive (:- ...) lasciando prima le clausole normali.
 
 is_directive_clause((:- _)).
 
@@ -79,7 +79,7 @@ reorder_clauses(Clauses, Reordered) :-
     append(Others, Directives, Reordered).
 
 /* ========================= TYPE VAR & TIPI =========================== */
-/* Gestione delle variabili di tipo e definizione dei costruttori di tipo. */
+/* Gestione delle variabili di tipo e definizione dei costruttori di tipo.*/
 
 fresh_type_var(t_var(Id)) :-
     retract(next_type_var_id(Id0)),
@@ -192,7 +192,7 @@ gen_args_constraints([Arg|Args], [Ty|Tys], VarEnv, CIn, COut, Goal) :-
     add_constraint(eq_in_context(TyTerm, Ty, Goal), C1, C2),
     gen_args_constraints(Args, Tys, VarEnv, C2, COut, Goal).
 
-/* ================== INFERENZA TIPO TERMINI SEMPLICI ================== */
+/* ================== INFERENZA TIPO TERMINI SEMPLICI ================== */    
 /* Assegna o deduce il tipo dei singoli termini. */
 
 infer_term_type(Term, _VarEnv, t_int, C, C) :-
