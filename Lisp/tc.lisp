@@ -650,7 +650,8 @@
                    ;; parametri obbligatori
                    (loop for pname in req-names
                          for pty   in req-types
-                         do (setf e (env-extend e pname (make-scheme nil pty))))
+                         do (setf e (env-extend e pname (make-scheme nil pty))
+                            ))
                    ;; parametri opzionali
                    (loop for p in opt-specs
                          for pty in opt-types
